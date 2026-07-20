@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .models import EvidenceLevel, IngredientEvidence
 
 EVIDENCE_WEIGHT: dict[EvidenceLevel, float] = {
@@ -108,7 +110,7 @@ INGREDIENT_EVIDENCE: tuple[IngredientEvidence, ...] = (
     ),
     IngredientEvidence(
         name="zinc pca",
-        aliases=("zinc",),
+        aliases=(),
         supports=("oil_control", "acne"),
         suitable_for=("oily", "combination"),
         cautions=("Can feel drying for already dry skin.",),
@@ -145,7 +147,7 @@ def find_evidence_for_ingredient(ingredient: str) -> IngredientEvidence | None:
     index = evidence_by_alias()
     if normalized in index:
         return index[normalized]
-    for alias, evidence in index.items():
-        if alias in normalized:
+    for alias, evidence in sorted(index.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", normalized):
             return evidence
     return None

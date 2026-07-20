@@ -100,6 +100,17 @@ function isSavedRecommendationItem(value: unknown): value is RecommendationItem 
     isOptionalString(product.displayNameKo) &&
     isOptionalString(product.imageUrl) &&
     isOptionalString(product.oliveyoungUrl) &&
+    isOptionalString(product.purchaseUrl) &&
+    isOptionalString(product.sourceUrl) &&
+    isOptionalString(product.officialUrl) &&
+    isOptionalString(product.retailerName) &&
+    isOptionalString(product.catalogSource) &&
+    isOptionalString(product.sourceUpdatedAt) &&
+    isOptionalString(product.priceCheckedAt) &&
+    isOptionalString(product.ingredientStatus) &&
+    isOptionalString(product.recommendationTier) &&
+    isOptionalString(product.dataLicense) &&
+    isOptionalString(product.dataAttributionUrl) &&
     isOptionalNumber(product.priceKrw) &&
     isOptionalNumber(product.rating) &&
     isOptionalNumber(product.reviewCount) &&
@@ -133,11 +144,45 @@ function readSavedItems(): RecommendationItem[] {
 }
 
 function formatPrice(price?: number): string {
-  return price ? `${new Intl.NumberFormat('ko-KR').format(price)}원` : '가격 확인';
+  return price ? `${new Intl.NumberFormat('ko-KR').format(price)}원` : '판매가 미제공';
 }
 
 function productDisplayName(item: RecommendationItem): string {
   return item.product.displayNameKo || item.product.name;
+}
+
+function sourceLabel(item: RecommendationItem): string {
+  if (item.product.catalogSource === 'open_beauty_facts') {
+    return 'Open Beauty Facts';
+  }
+  return item.product.retailerName || '검증 카탈로그';
+}
+
+function sourceDate(item: RecommendationItem): string {
+  const value = item.product.sourceUpdatedAt || item.product.priceCheckedAt;
+  const date = value?.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  return date ? date.replace(/-/g, '.') : '';
+}
+
+function productAction(item: RecommendationItem): { label: string; url: string } {
+  const { product } = item;
+  const purchaseUrl = product.purchaseUrl || product.oliveyoungUrl;
+  if (purchaseUrl) {
+    return {
+      label: product.retailerName ? `${product.retailerName}에서 확인` : '판매처에서 확인',
+      url: purchaseUrl,
+    };
+  }
+  if (product.catalogSource === 'open_beauty_facts' && product.sourceUrl) {
+    return { label: '제품 데이터·출처 보기', url: product.sourceUrl };
+  }
+  if (product.officialUrl) {
+    return { label: '공식 제품 정보 보기', url: product.officialUrl };
+  }
+  if (product.sourceUrl) {
+    return { label: '제품 정보 보기', url: product.sourceUrl };
+  }
+  return { label: '올리브영에서 검색', url: oliveYoungSearchUrl(productDisplayName(item)) };
 }
 
 function toggleInList(list: string[], value: string): string[] {
@@ -239,7 +284,7 @@ function ProductCard({
   priority = false,
 }: ProductCardProps) {
   const { product } = item;
-  const purchaseUrl = product.oliveyoungUrl || oliveYoungSearchUrl(productDisplayName(item));
+  const action = productAction(item);
   const [imageFailed, setImageFailed] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageUrl = imageFailed ? undefined : product.imageUrl;
@@ -292,6 +337,11 @@ function ProductCard({
           </p>
         )}
 
+        <p className="source-row">
+          <span>{sourceLabel(item)}</span>
+          {sourceDate(item) && <span>데이터 수정 {sourceDate(item)}</span>}
+        </p>
+
         {!compact && (
           <>
             <section className="reason-box" aria-label="추천 이유">
@@ -324,12 +374,12 @@ function ProductCard({
           type="button"
           className="purchase-button"
           onClick={() => {
-            void openExternalUrl(purchaseUrl).catch((openError: unknown) => {
-              onOpenError(openError instanceof Error ? openError.message : '올리브영 페이지를 열지 못했어요.');
+            void openExternalUrl(action.url).catch((openError: unknown) => {
+              onOpenError(openError instanceof Error ? openError.message : '제품 정보 페이지를 열지 못했어요.');
             });
           }}
         >
-          올리브영에서 보기
+          {action.label}
           <ArrowIcon />
         </button>
       </div>
@@ -344,7 +394,7 @@ function LoadingPanel() {
         <span />
       </div>
       <h2>딱 맞는 제품을 찾고 있어요</h2>
-      <p>피부 조건, 성분, 가격을 하나씩 비교 중이에요.</p>
+      <p>검증 상품과 글로벌 오픈 카탈로그의 성분을 비교 중이에요.</p>
       <div className="loading-steps" aria-hidden="true">
         <span className="is-active" />
         <span />
@@ -507,13 +557,13 @@ function App() {
         ) : screen === 'survey' ? (
           <div className="survey-screen">
             <section className="hero-section">
-              <span className="eyebrow">나만의 K-뷰티 큐레이터</span>
+              <span className="eyebrow">K-뷰티부터 글로벌 스킨케어까지</span>
               <h1>
                 내 피부에 맞는 제품,
                 <br />
                 근거까지 보고 골라요
               </h1>
-              <p>몇 가지만 알려주면 제품 성분과 피부 적합도를 비교해 드려요.</p>
+              <p>몇 가지만 알려주면 여러 출처의 제품 성분과 피부 적합도를 비교해 드려요.</p>
               <div className="hero-visual" aria-hidden="true">
                 <div className="hero-bottle hero-bottle--left"><span /></div>
                 <div className="hero-jar"><span>K</span></div>
@@ -613,7 +663,7 @@ function App() {
                   <span>5</span>
                   <div>
                     <h2>예산은 어느 정도인가요?</h2>
-                    <p>올리브영 판매가를 기준으로 찾아볼게요.</p>
+                    <p>최근 확인된 판매가가 있는 제품만 예산 조건에 포함돼요.</p>
                   </div>
                 </div>
                 <div className="chip-group">
@@ -693,6 +743,11 @@ function App() {
           <div className="results-screen">
             <section className="results-heading">
               <span className="eyebrow">맞춤 분석 완료</span>
+              {result?.catalogTotal && (
+                <p className="catalog-count">
+                  현재 {new Intl.NumberFormat('ko-KR').format(result.catalogTotal)}개 제품 데이터가 있어요 · 선택 조건에 맞는 모든 후보를 비교했어요
+                </p>
+              )}
               <h1>{result?.items.length || 0}개 제품을 골랐어요</h1>
               <p>{result?.summary}</p>
             </section>
@@ -723,6 +778,7 @@ function App() {
             <div className="guardrail-note">
               <strong>구매 전 확인해 주세요</strong>
               <p>피부 반응은 개인마다 달라요. 민감 피부는 소량으로 패치 테스트하고, 가격·재고는 판매처에서 다시 확인해 주세요.</p>
+              <p>Open Beauty Facts 데이터는 ODbL, 상품 이미지는 CC BY-SA 조건으로 제공돼요. 최신 덤프를 매일 확인하지만 개별 커뮤니티 상품 정보는 오래됐거나 누락될 수 있어요.</p>
             </div>
 
             <button type="button" className="secondary-button" onClick={goHome}>조건 바꿔 다시 찾기</button>

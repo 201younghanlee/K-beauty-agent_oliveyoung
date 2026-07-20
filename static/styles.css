@@ -426,6 +426,24 @@ body[data-page="home"] main {
   font-weight: 800;
 }
 
+.catalog-notice {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border: 1px solid rgba(150, 92, 110, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 250, 247, 0.82);
+  color: var(--muted);
+}
+
+.catalog-notice p {
+  margin: 6px 0 0;
+}
+
+.catalog-notice a {
+  color: var(--rose-dark);
+  font-weight: 800;
+}
+
 .criteria-panel {
   margin-bottom: 14px;
   padding: 18px;

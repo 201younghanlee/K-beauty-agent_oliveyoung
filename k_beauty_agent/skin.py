@@ -100,7 +100,7 @@ INGREDIENT_TERMS = {
     "retinol": ("retinol", "retinal", "레티놀", "레티날"),
     "azelaic acid": ("azelaic acid", "아젤라익", "아젤라익애씨드"),
     "centella asiatica": ("centella", "centella asiatica", "centella asiatica extract", "cica", "병풀", "병풀추출물", "시카"),
-    "zinc pca": ("zinc pca", "zinc", "징크", "아연"),
+    "zinc pca": ("zinc pca", "징크 pca", "징크피씨에이"),
     "fragrance": ("fragrance", "parfum", "perfume", "lavender oil", "limonene", "linalool", "essential oil", "향료", "향수", "라벤더오일", "리모넨", "리날룰", "에센셜오일"),
     "alcohol": ("alcohol", "ethanol", "cetearyl alcohol", "알코올", "에탄올", "세테아릴알코올"),
     "snail": ("snail", "snail secretion filtrate", "달팽이", "스네일", "달팽이점액"),
@@ -132,10 +132,13 @@ def analyze_skin_query(query: str) -> SkinProfile:
     text = query.lower()
     profile = SkinProfile()
 
-    for skin_type, terms in SKIN_TYPE_TERMS.items():
-        if _contains_any(text, terms):
-            profile.skin_type = skin_type
-            break
+    matched_skin_types = [skin_type for skin_type, terms in SKIN_TYPE_TERMS.items() if _contains_any(text, terms)]
+    if "sensitive" in matched_skin_types:
+        profile.skin_type = "sensitive"
+    elif "combination" in matched_skin_types or {"oily", "dry"}.issubset(matched_skin_types):
+        profile.skin_type = "combination"
+    elif matched_skin_types:
+        profile.skin_type = matched_skin_types[0]
 
     for concern, terms in CONCERN_TERMS.items():
         if _contains_any(text, terms):
@@ -167,6 +170,9 @@ def analyze_skin_query(query: str) -> SkinProfile:
 
     profile.avoid_ingredients.extend(_extract_avoid_ingredients(text))
     profile.preferred_ingredients.extend(_extract_preferred_ingredients(text))
+    profile.preferred_ingredients = [
+        ingredient for ingredient in profile.preferred_ingredients if ingredient not in profile.avoid_ingredients
+    ]
     profile.texture_preference = _extract_texture_preference(text)
     profile.max_price_usd = _extract_max_price_usd(text)
     profile.max_price_krw = _extract_max_price_krw(text)
@@ -186,7 +192,8 @@ def analyze_skin_query(query: str) -> SkinProfile:
 
     _infer_default_concerns(profile)
 
-    explicit_avoids = re.findall(r"(?:avoid|without|no|빼고|제외)\s*([a-zA-Z가-힣 ]{2,30})", query)
+    explicit_avoids = re.findall(r"\b(?:avoid|without|no)\b\s+([a-zA-Z가-힣 ]{2,30})", query)
+    explicit_avoids.extend(re.findall(r"(?:빼고|제외)\s*([a-zA-Z가-힣 ]{2,30})", query))
     explicit_avoids.extend(re.findall(r"([a-zA-Z가-힣 ]{2,30})(?:알러지|알레르기|피하고|피해야)", query))
     for item in explicit_avoids:
         cleaned = item.strip(" .,!?:;")

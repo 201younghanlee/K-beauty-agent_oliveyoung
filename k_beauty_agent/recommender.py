@@ -5,6 +5,17 @@ from .models import Product, ProductScore, SkinProfile
 
 MIN_RECOMMENDATION_SCORE = 3.0
 HARD_EXCLUSION_SCORE = -50.0
+SAFETY_SENSITIVITIES = {"fragrance_sensitive", "gentle_preference"}
+
+
+def needs_complete_ingredient_data(profile: SkinProfile) -> bool:
+    return bool(
+        profile.skin_type == "sensitive"
+        or profile.avoid_ingredients
+        or profile.allergies
+        or profile.pregnant_or_nursing
+        or SAFETY_SENSITIVITIES.intersection(profile.sensitivities)
+    )
 
 
 class IngredientHybridRecommender:
@@ -35,6 +46,17 @@ class IngredientHybridRecommender:
         product_ingredients = [normalize_token(value) for value in product.ingredients]
         preferred_ingredients = [normalize_token(value) for value in profile.preferred_ingredients]
 
+        if product.recommendation_tier not in {"verified", "eligible"}:
+            self._add(item, "penalties", -100.0)
+            item.cautions.append("excluded because this catalog record is for discovery only")
+        if product.ingredient_status != "complete":
+            if needs_complete_ingredient_data(profile):
+                self._add(item, "penalties", -100.0)
+                item.cautions.append("excluded because the full ingredient list is not available")
+            else:
+                self._add(item, "penalties", -1.0)
+                item.cautions.append("ingredient data is community-reported; verify the current package before use")
+
         if profile.skin_type and profile.skin_type in product.suited_skin_types:
             self._add(item, "skin_fit", 1.5)
             item.reasons.append(f"labeled as suitable for {profile.skin_type} skin")
@@ -50,17 +72,6 @@ class IngredientHybridRecommender:
             elif normalize_token(product.category) == normalize_token(category):
                 self._add(item, "category_match", 1.0)
                 item.reasons.append(f"matches requested category: {category}")
-
-        is_oliveyoung_snapshot = bool(product.oliveyoung_url and "oliveyoung.co.kr" in product.oliveyoung_url)
-        if (
-            is_oliveyoung_snapshot
-            and not product.ingredients
-            and not profile.avoid_ingredients
-            and not profile.allergies
-            and any(normalize_token(product.category) == normalize_token(category) for category in profile.desired_categories)
-        ):
-            self._add(item, "category_match", 4.0)
-            item.reasons.append("Olive Young saved snapshot matches the requested category; ingredient list still needs verification")
 
         for avoid in avoid_tokens:
             if not avoid:
@@ -94,11 +105,11 @@ class IngredientHybridRecommender:
             and profile.min_price_krw is None
             and profile.min_price_usd is None
         ):
-            if product.oliveyoung_price_krw is not None:
-                budget_score = max(0.0, min(1.0, (40000.0 - product.oliveyoung_price_krw) / 40000.0))
+            if product.price_krw is not None:
+                budget_score = max(0.0, min(1.0, (40000.0 - product.price_krw) / 40000.0))
                 if budget_score:
                     self._add(item, "personalization", budget_score)
-                    item.reasons.append("lower Olive Young snapshot price fits the budget preference")
+                    item.reasons.append("lower checked price fits the budget preference")
             elif product.price_usd is None:
                 item.missing_data.append("price")
             else:
@@ -107,27 +118,27 @@ class IngredientHybridRecommender:
                     self._add(item, "personalization", budget_score)
                     item.reasons.append("lower listed price fits the budget follow-up")
         if profile.max_price_krw is not None:
-            if product.oliveyoung_price_krw is None:
+            if product.price_krw is None:
                 self._add(item, "penalties", -100.0)
-                item.missing_data.append("oliveyoung price")
-                item.cautions.append(f"Olive Young price is missing, so cannot verify under ₩{profile.max_price_krw:,}")
-            elif product.oliveyoung_price_krw <= profile.max_price_krw:
+                item.missing_data.append("price")
+                item.cautions.append(f"checked price is missing, so cannot verify under ₩{profile.max_price_krw:,}")
+            elif product.price_krw <= profile.max_price_krw:
                 self._add(item, "personalization", 3.0)
-                item.reasons.append(f"Olive Young snapshot price is within requested maximum: ₩{profile.max_price_krw:,}")
+                item.reasons.append(f"checked price is within requested maximum: ₩{profile.max_price_krw:,}")
             else:
                 self._add(item, "penalties", -100.0)
-                item.cautions.append(f"excluded because Olive Young snapshot price exceeds requested maximum: ₩{profile.max_price_krw:,}")
+                item.cautions.append(f"excluded because checked price exceeds requested maximum: ₩{profile.max_price_krw:,}")
         if profile.min_price_krw is not None:
-            if product.oliveyoung_price_krw is None:
+            if product.price_krw is None:
                 self._add(item, "penalties", -100.0)
-                item.missing_data.append("oliveyoung price")
-                item.cautions.append(f"Olive Young price is missing, so cannot verify over ₩{profile.min_price_krw:,}")
-            elif product.oliveyoung_price_krw >= profile.min_price_krw:
+                item.missing_data.append("price")
+                item.cautions.append(f"checked price is missing, so cannot verify over ₩{profile.min_price_krw:,}")
+            elif product.price_krw >= profile.min_price_krw:
                 self._add(item, "personalization", 3.0)
-                item.reasons.append(f"Olive Young snapshot price is within requested minimum: ₩{profile.min_price_krw:,}")
+                item.reasons.append(f"checked price is within requested minimum: ₩{profile.min_price_krw:,}")
             else:
                 self._add(item, "penalties", -100.0)
-                item.cautions.append(f"excluded because Olive Young snapshot price is below requested minimum: ₩{profile.min_price_krw:,}")
+                item.cautions.append(f"excluded because checked price is below requested minimum: ₩{profile.min_price_krw:,}")
         if profile.max_price_usd is not None:
             if product.price_usd is None:
                 self._add(item, "penalties", -100.0)
@@ -158,10 +169,12 @@ class IngredientHybridRecommender:
                 self._add(item, "skin_fit", 0.75)
                 item.reasons.append(f"matches requested texture preference: {profile.texture_preference}")
 
+        scored_evidence_names: set[str] = set()
         for ingredient in product.ingredients:
             evidence = find_evidence_for_ingredient(ingredient)
-            if evidence is None:
+            if evidence is None or evidence.name in scored_evidence_names:
                 continue
+            scored_evidence_names.add(evidence.name)
 
             normalized_name = evidence.name
             matched_concerns = sorted(set(profile.concerns) & set(evidence.supports))
@@ -210,6 +223,10 @@ class IngredientHybridRecommender:
             self._add(item, "penalties", -2.0)
             item.missing_data.append("ingredient list")
         if product.rating is None or product.review_count is None:
+            # Keep useful community catalog rows available, while preferring
+            # products whose fit is supported by review evidence when scores
+            # are otherwise close.
+            self._add(item, "penalties", -0.75)
             item.missing_data.append("rating/review count")
         elif product.review_count > 0:
             self._add(item, "review_confidence", min(1.0, product.review_count / 2000.0))

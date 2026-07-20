@@ -1,0 +1,107 @@
+{
+  "attribution": {
+    "name": "Open Beauty Facts",
+    "notice": "Contains information from Open Beauty Facts, licensed under ODbL 1.0. Open Beauty Facts product images are licensed under CC BY-SA 3.0.",
+    "url": "https://world.openbeautyfacts.org/data"
+  },
+  "catalog_source": "open_beauty_facts",
+  "category_counts": {
+    "cleanser": 93,
+    "moisturizer": 107,
+    "serum": 4,
+    "sunscreen": 10,
+    "toner": 4
+  },
+  "columns": [
+    "id",
+    "name",
+    "brand",
+    "category",
+    "country",
+    "ingredients",
+    "claims",
+    "source_url",
+    "ingredient_source_url",
+    "verified_at",
+    "image_url",
+    "image_verified_source",
+    "image_source_type",
+    "image_confidence",
+    "image_view_type",
+    "official_url",
+    "catalog_source",
+    "source_product_id",
+    "source_updated_at",
+    "fetched_at",
+    "ingredient_status",
+    "recommendation_tier",
+    "data_license",
+    "data_attribution_url"
+  ],
+  "country_counts": {
+    "Unknown": 218
+  },
+  "csv_sha256": "ba3d932decccefb906f0e803ce63b9bd8d7439750a9ebbbc343096ae865e8641",
+  "data_quality": {
+    "ingredient_status": "reported",
+    "notice": "Ingredient lists are community-reported label transcriptions and are not guaranteed complete. Verify current packaging; allergy and avoid-ingredient recommendations must exclude these rows.",
+    "recommendation_tier": "eligible"
+  },
+  "generated_at": "2026-07-20T00:17:46Z",
+  "licenses": {
+    "database": {
+      "id": "ODbL-1.0",
+      "name": "Open Database License 1.0",
+      "url": "https://opendatacommons.org/licenses/odbl/1-0/"
+    },
+    "product_images": {
+      "id": "CC-BY-SA-3.0",
+      "name": "Creative Commons Attribution-ShareAlike 3.0",
+      "url": "https://creativecommons.org/licenses/by-sa/3.0/"
+    }
+  },
+  "previous_product_count": 219,
+  "processing": {
+    "accepted_candidates": 218,
+    "duplicate_rows": 0,
+    "lines_seen": 67097,
+    "malformed_json": 0,
+    "non_object_rows": 0,
+    "skipped": {
+      "invalid_barcode": 105,
+      "malformed_ingredient_text": 19,
+      "missing_brand": 8946,
+      "missing_image": 289,
+      "missing_ingredients": 279,
+      "missing_name": 22766,
+      "packaging_text_in_ingredients": 1,
+      "too_few_ingredients": 30,
+      "unsupported_category": 34444
+    }
+  },
+  "product_count": 218,
+  "record_freshness": {
+    "as_of": "2026-07-20T00:17:46Z",
+    "dated_products": 218,
+    "median_age_days": 1813,
+    "missing_source_updated_at": 0,
+    "newest_source_updated_at": "2025-06-08T11:23:37Z",
+    "older_than_365_days": 218,
+    "older_than_3_years": 157,
+    "older_than_5_years": 97,
+    "oldest_source_updated_at": "2016-02-27T19:24:00Z",
+    "updated_within_365_days": 0
+  },
+  "safety_thresholds": {
+    "max_drop_ratio": 0.25,
+    "max_duplicate_ratio": 0.05,
+    "max_malformed_ratio": 0.001,
+    "min_products": 100,
+    "minimum_products_per_category": 1
+  },
+  "schema_version": 1,
+  "source_dump_url": "https://static.openbeautyfacts.org/data/openbeautyfacts-products.jsonl.gz",
+  "source_etag": "\"6a5d692a-548cd69\"",
+  "source_last_modified": "2026-07-20T00:17:46Z",
+  "source_mode": "remote_dump"
+}

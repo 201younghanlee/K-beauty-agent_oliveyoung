@@ -2,7 +2,7 @@ import { openURL } from '@apps-in-toss/web-framework';
 
 export async function openExternalUrl(url: string): Promise<void> {
   if (!url.startsWith('https://')) {
-    throw new Error('안전한 올리브영 주소를 확인할 수 없어요.');
+    throw new Error('안전한 외부 주소를 확인할 수 없어요.');
   }
 
   const hasNativeBridge = Boolean((window as Window & { ReactNativeWebView?: unknown }).ReactNativeWebView);
@@ -19,7 +19,7 @@ export async function openExternalUrl(url: string): Promise<void> {
   try {
     await openURL(url);
   } catch {
-    throw new Error('올리브영 페이지를 열지 못했어요. 잠시 후 다시 시도해 주세요.');
+    throw new Error('제품 정보 페이지를 열지 못했어요. 잠시 후 다시 시도해 주세요.');
   }
 }
 

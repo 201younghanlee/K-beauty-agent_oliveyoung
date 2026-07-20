@@ -7,6 +7,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_PRODUCTS_CSV = BASE_DIR / "data" / "products_verified.csv"
 DEFAULT_REVIEWS_CSV = BASE_DIR / "data" / "review_summaries.csv"
+DEFAULT_GENERATED_CATALOG_CSV = BASE_DIR / "data" / "catalog_generated.csv"
+DEFAULT_CATALOG_MANIFEST = BASE_DIR / "data" / "catalog_manifest.json"
 DEFAULT_JSON_DB = BASE_DIR / "data" / "sample_products.json"
 DEFAULT_SQLITE_PATH = BASE_DIR / "data" / "k_beauty_agent.sqlite3"
 DEFAULT_EXTERNAL_CACHE_PATH = BASE_DIR / "data" / "external_product_cache.sqlite3"
@@ -17,7 +19,7 @@ def database_url() -> str:
 
 
 def product_source() -> str:
-    return os.getenv("PRODUCT_SOURCE", "live_keyless").lower()
+    return os.getenv("PRODUCT_SOURCE", "catalog_snapshot").lower()
 
 
 def external_cache_path() -> Path:

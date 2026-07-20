@@ -144,6 +144,8 @@ def translate_reason(reason: str, language: Language | None) -> str:
         return "표기 가격이 낮아 예산을 고려한 후속 요청에 맞습니다."
     if reason == "lower Olive Young snapshot price fits the budget preference":
         return "올리브영 기준 스냅샷 가격이 낮아 예산 선호에 맞습니다."
+    if reason == "lower checked price fits the budget preference":
+        return "최근 확인된 가격이 낮아 예산 선호에 맞습니다."
     if reason.startswith("contains requested ingredient: "):
         ingredient = reason.removeprefix("contains requested ingredient: ")
         return f"후속 요청한 성분({term(ingredient, language)})을 포함합니다."
@@ -153,6 +155,12 @@ def translate_reason(reason: str, language: Language | None) -> str:
     if reason.startswith("Olive Young snapshot price is within requested maximum: "):
         price = reason.removeprefix("Olive Young snapshot price is within requested maximum: ")
         return f"올리브영 스냅샷 가격이 요청한 최대 가격({price}) 이내입니다."
+    if reason.startswith("checked price is within requested maximum: "):
+        price = reason.removeprefix("checked price is within requested maximum: ")
+        return f"최근 확인된 가격이 요청한 최대 가격({price}) 이내입니다."
+    if reason.startswith("checked price is within requested minimum: "):
+        price = reason.removeprefix("checked price is within requested minimum: ")
+        return f"최근 확인된 가격이 요청한 최소 가격({price}) 이상입니다."
     if reason.startswith("matches requested texture preference: "):
         texture = reason.removeprefix("matches requested texture preference: ")
         return f"선호 제형({term(texture, language)})과 일치합니다."
@@ -179,9 +187,17 @@ def translate_caution(caution: str, language: Language | None) -> str:
         "salicylic acid conflicts with salicylate allergy": "살리실산은 살리실레이트 알레르기와 충돌합니다.",
         "can be less gentle for irritation-prone follow-ups": "자극을 줄이고 싶은 후속 요청에는 덜 순할 수 있습니다.",
         "does not contain requested ingredient": "후속 요청한 성분을 포함하지 않음",
+        "excluded because this catalog record is for discovery only": "둘러보기 전용 상품이라 맞춤 추천에서 제외했습니다.",
+        "excluded because the full ingredient list is not available": "전체 성분 정보가 없어 맞춤 추천에서 제외했습니다.",
+        "ingredient data may be incomplete": "성분 정보가 불완전할 수 있습니다.",
+        "ingredient data is community-reported; verify the current package before use": "커뮤니티가 등록한 성분 정보이므로 사용 전 현재 포장을 다시 확인해 주세요.",
         "price is missing, so cannot verify under": "가격 데이터가 없어 최대 가격 조건을 확인할 수 없음:",
+        "checked price is missing, so cannot verify under": "최근 확인된 가격이 없어 최대 가격 조건을 확인할 수 없음:",
+        "checked price is missing, so cannot verify over": "최근 확인된 가격이 없어 최소 가격 조건을 확인할 수 없음:",
         "Olive Young price is missing, so cannot verify under": "올리브영 가격 데이터가 없어 최대 가격 조건을 확인할 수 없음:",
         "excluded because listed price exceeds requested maximum": "표기 가격이 요청한 최대 가격을 초과해 제외:",
+        "excluded because checked price exceeds requested maximum": "최근 확인된 가격이 요청한 최대 가격을 초과해 제외:",
+        "excluded because checked price is below requested minimum": "최근 확인된 가격이 요청한 최소 가격보다 낮아 제외:",
         "excluded because Olive Young snapshot price exceeds requested maximum": "올리브영 스냅샷 가격이 요청한 최대 가격을 초과해 제외:",
         "product DB says avoid for": "제품 DB상 피해야 하는 조건:",
         "no recognized evidence-backed ingredient matched the user concern": "사용자 고민과 직접 매칭되는 근거 성분이 부족합니다.",
