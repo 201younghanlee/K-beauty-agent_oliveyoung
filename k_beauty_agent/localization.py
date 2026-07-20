@@ -179,6 +179,10 @@ def translate_reason(reason: str, language: Language | None) -> str:
 def translate_caution(caution: str, language: Language | None) -> str:
     if not is_korean(language):
         return caution
+    # Match the more specific price messages before the generic
+    # ``price is missing`` fragment. Otherwise a message such as
+    # ``checked price is missing`` is partially translated and leaks the
+    # internal word "checked" into Korean customer copy.
     replacements = {
         "DB suitability does not include": "제품 DB 적합 피부에 포함되지 않음:",
         "excluded because it contains avoided ingredient/allergy signal": "피해야 할 성분/알레르기 신호와 충돌:",
@@ -191,10 +195,10 @@ def translate_caution(caution: str, language: Language | None) -> str:
         "excluded because the full ingredient list is not available": "전체 성분 정보가 없어 맞춤 추천에서 제외했습니다.",
         "ingredient data may be incomplete": "성분 정보가 불완전할 수 있습니다.",
         "ingredient data is community-reported; verify the current package before use": "커뮤니티가 등록한 성분 정보이므로 사용 전 현재 포장을 다시 확인해 주세요.",
-        "price is missing, so cannot verify under": "가격 데이터가 없어 최대 가격 조건을 확인할 수 없음:",
         "checked price is missing, so cannot verify under": "최근 확인된 가격이 없어 최대 가격 조건을 확인할 수 없음:",
         "checked price is missing, so cannot verify over": "최근 확인된 가격이 없어 최소 가격 조건을 확인할 수 없음:",
         "Olive Young price is missing, so cannot verify under": "올리브영 가격 데이터가 없어 최대 가격 조건을 확인할 수 없음:",
+        "price is missing, so cannot verify under": "가격 데이터가 없어 최대 가격 조건을 확인할 수 없음:",
         "excluded because listed price exceeds requested maximum": "표기 가격이 요청한 최대 가격을 초과해 제외:",
         "excluded because checked price exceeds requested maximum": "최근 확인된 가격이 요청한 최대 가격을 초과해 제외:",
         "excluded because checked price is below requested minimum": "최근 확인된 가격이 요청한 최소 가격보다 낮아 제외:",

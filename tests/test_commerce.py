@@ -14,7 +14,9 @@ from fastapi.testclient import TestClient
 from k_beauty_agent.agent import KBeautyAgent
 from k_beauty_agent.commerce import CommerceService, RedirectTokenError
 from k_beauty_agent.database import ProductDatabase
-from k_beauty_agent.models import Product
+from k_beauty_agent.localization import translate_caution
+from k_beauty_agent.models import Product, ProductScore
+from k_beauty_agent.serializers import fallback_personalized_reason, score_to_dict
 from k_beauty_agent.storage import SQLiteStore, hash_session
 
 
@@ -108,22 +110,69 @@ def test_stale_offer_hides_price_and_stock_but_keeps_checked_time(tmp_path: Path
     assert offer["price"] == {"amount": None, "currency": "KRW", "status": "stale"}
     assert offer["stock_status"] == "unknown"
     assert offer["freshness"]["checked_at"] == "2026-07-20T00:00:00Z"
-    assert offer["redirect_url"] is None
+    assert offer["link_only"] is True
+    assert offer["redirect_url"].startswith("/r/")
+    token = offer["redirect_url"].removeprefix("/r/")
+    assert service.resolve_redirect_token(token, now=1_784_676_000).url == (
+        "https://shop.example.com/products/example-serum"
+    )
     assert bundle["summary"]["best_current_price"] is None
 
 
 def test_redirect_token_stops_working_when_offer_becomes_stale(tmp_path: Path) -> None:
     store, service = _service(tmp_path)
-    with store.connect() as connection:
-        offer_id = connection.execute("SELECT id FROM offers").fetchone()["id"]
-        connection.execute(
-            "UPDATE offers SET checked_at = 100, stale_after = 110 WHERE id = ?",
-            (offer_id,),
-        )
+    service.upsert_retailer(
+        retailer_id="live-shop",
+        display_name="Live Shop",
+        base_url="https://live.example.com",
+        allowed_domains=["live.example.com"],
+    )
+    service.upsert_offer(
+        product_id="example-serum",
+        retailer_id="live-shop",
+        destination_url="https://live.example.com/products/example-serum",
+        source_kind="approved_partner_feed",
+        offer_id="live-offer",
+        checked_at=100,
+        ttl_seconds=60,
+    )
 
-    token = service.create_redirect_token(offer_id, now=100)
+    token = service.create_redirect_token("live-offer", now=100)
     with pytest.raises(RedirectTokenError, match="stale"):
-        service.resolve_redirect_token(token, now=111)
+        service.resolve_redirect_token(token, now=161)
+
+
+def test_price_diagnostics_do_not_leak_into_customer_copy() -> None:
+    score = ProductScore(
+        product=_product(),
+        score=5.0,
+        reasons=["category matches requested type: serum"],
+        cautions=["checked price is missing, so cannot verify under ₩50,000"],
+    )
+
+    assert "checked" not in translate_caution(score.cautions[0], "ko")
+    assert "가격" not in fallback_personalized_reason(score, "ko")
+    assert score_to_dict(score, "ko")["display_cautions"] == []
+
+
+def test_krw_budget_does_not_claim_an_unrelated_usd_catalog_price() -> None:
+    product = replace(_product(), price_krw=None, price_usd=12.0)
+    recommendation = KBeautyAgent(ProductDatabase([product])).recommend(
+        "controlled profile",
+        structured_profile={
+            "skin_type": "dry",
+            "concerns": ["hydration"],
+            "desired_categories": ["serum"],
+            "sensitivities": ["budget_preference"],
+            "max_price_krw": 50_000,
+        },
+    )
+
+    assert recommendation.results
+    assert all(
+        "lower listed price" not in reason
+        for reason in recommendation.results[0].reasons
+    )
 
 
 def test_mixed_currency_offers_use_only_krw_for_krw_lowest_price(tmp_path: Path) -> None:

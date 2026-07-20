@@ -401,6 +401,7 @@ function normalizeOffer(value: unknown, index: number): RetailOffer | null {
       ?? value.redirect_url
       ?? value.redirectUrl,
     ),
+    isLinkOnly: asBoolean(value.link_only ?? value.linkOnly) ?? false,
     isAffiliate: affiliate ?? relationship === 'affiliate',
     affiliateLabel: firstText(
       value.affiliate_label,
@@ -521,6 +522,34 @@ function normalizeProduct(rawItem: Record<string, unknown>): Product | null {
   };
 }
 
+function isOperationalPriceDiagnostic(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return [
+    'price is missing, so cannot verify',
+    'checked price is missing, so cannot verify',
+    'olive young price is missing, so cannot verify',
+    'checked 가격 데이터가 없어',
+    '가격 데이터가 없어 최대 가격 조건을 확인할 수 없음',
+    '최근 확인된 가격이 없어 최대 가격 조건을 확인할 수 없음',
+    '최근 확인된 가격이 없어 최소 가격 조건을 확인할 수 없음',
+    '올리브영 가격 데이터가 없어 최대 가격 조건을 확인할 수 없음',
+    'excluded because checked price',
+    'excluded because listed price',
+    '가격이 요청한 최대 가격을 초과해 제외',
+    '가격이 요청한 최소 가격보다 낮아 제외',
+  ].some((fragment) => normalized.includes(fragment));
+}
+
+function customerReason(value: string): string {
+  for (const separator of [' 다만 ', ' Note: ']) {
+    const boundary = value.lastIndexOf(separator);
+    if (boundary > 0 && isOperationalPriceDiagnostic(value.slice(boundary + separator.length))) {
+      return value.slice(0, boundary).trim();
+    }
+  }
+  return isOperationalPriceDiagnostic(value) ? '' : value;
+}
+
 function normalizeItem(value: unknown): RecommendationItem | null {
   if (!isRecord(value)) {
     return null;
@@ -530,22 +559,23 @@ function normalizeItem(value: unknown): RecommendationItem | null {
     return null;
   }
 
-  const reason = firstText(
+  const reason = customerReason(firstText(
     value.personalized_reason,
     value.display_reasons,
     value.ai_recommendation_explanation,
     value.reasons,
     value.why_recommended,
     value.why,
-  );
+  ));
+  const cautionSource = Array.isArray(value.display_cautions)
+    ? asStringArray(value.display_cautions)
+    : asStringArray(value.cautions);
 
   return {
     product,
     score: asNumber(value.score),
     reason: reason || '선택한 피부 조건과 제품 정보의 적합도를 기준으로 추천했어요.',
-    cautions: asStringArray(value.display_cautions).length
-      ? asStringArray(value.display_cautions)
-      : asStringArray(value.cautions),
+    cautions: cautionSource.filter((caution) => !isOperationalPriceDiagnostic(caution)),
     matchedIngredients: asStringArray(value.display_matched_ingredients).length
       ? asStringArray(value.display_matched_ingredients)
       : asStringArray(value.matched_ingredients).length

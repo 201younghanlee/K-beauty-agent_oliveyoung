@@ -164,11 +164,13 @@ LLM. Follow-up constraints are parsed locally into the same controlled fields.
 
 - `GET /api/v2/products/{product_id}/offers` returns retailer offers, freshness,
   stock, affiliate disclosure, and an expiring relative `redirect_url`.
-- Stale offers hide price and stock and return `redirect_url: null`; link-only
-  offers may have unknown price/stock while retaining an operator-approved link.
+- Stale price/stock feed offers hide price and stock and return
+  `redirect_url: null`; explicitly link-only offers retain an operator-approved,
+  allowlisted destination while price and stock stay hidden.
 - Clients must open only the returned relative redirect and must not construct a
   retailer URL. The redirect rechecks activity, exact destination-domain
-  allowlisting, target fingerprint, token expiry, and offer freshness.
+  allowlisting, target fingerprint, token expiry, and either offer freshness or
+  the explicit link-only source policy.
 - `GET /api/v2/catalog/status` exposes public product/variant/retailer/offer and
   freshness counts without click, conversion, program, or ingestion-error data.
 

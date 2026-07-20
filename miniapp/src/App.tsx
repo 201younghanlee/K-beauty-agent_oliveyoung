@@ -273,9 +273,9 @@ function productDisplayName(item: RecommendationItem): string {
 
 function sourceLabel(item: RecommendationItem): string {
   if (item.product.catalogSource === 'open_beauty_facts') {
-    return 'Open Beauty Facts';
+    return '공개 상품 정보';
   }
-  return item.product.retailerName || '검증 카탈로그';
+  return '상품 정보';
 }
 
 function sourceDate(item: RecommendationItem): string {
@@ -429,6 +429,8 @@ function ProductCard({
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageUrl = imageFailed ? undefined : product.imageUrl;
   const attributionUrl = sourceAttributionUrl(product);
+  const canCompareRetailers = summary.retailerCount > 0 || product.catalogSource === 'curated';
+  const canOpenInformation = !canCompareRetailers && Boolean(attributionUrl);
 
   return (
     <article className={`product-card ${compact ? 'product-card--compact' : ''}`}>
@@ -471,7 +473,7 @@ function ProductCard({
             <strong className="product-price">
               {summary.lowestPrice !== undefined
                 ? `최저 ${formatPrice(summary.lowestPrice, summary.currency)}`
-                : '가격 확인 필요'}
+                : canCompareRetailers ? '판매처에서 가격 확인' : '가격 정보 없음'}
             </strong>
             {summary.retailerCount > 0 && <span>판매처 {summary.retailerCount}곳</span>}
           </div>
@@ -487,10 +489,10 @@ function ProductCard({
 
         <p className="source-row">
           <span>{sourceLabel(item)}</span>
-          {sourceDate(item) && <span>데이터 수정 {sourceDate(item)}</span>}
+          {sourceDate(item) && <span>정보 기준 {sourceDate(item)}</span>}
           {attributionUrl && (
             <button type="button" onClick={() => onOpenInformation(attributionUrl)}>
-              원본·출처 보기
+              상품 정보 출처
             </button>
           )}
         </p>
@@ -523,8 +525,21 @@ function ProductCard({
           </>
         )}
 
-        <button type="button" className="purchase-button" onClick={() => onCompareOffers(item)}>
-          {summary.retailerCount > 0 ? `판매처 ${summary.retailerCount}곳 비교` : '판매처 확인'}
+        <button
+          type="button"
+          className="purchase-button"
+          disabled={!canCompareRetailers && !canOpenInformation}
+          onClick={() => {
+            if (canCompareRetailers) {
+              onCompareOffers(item);
+            } else if (attributionUrl) {
+              onOpenInformation(attributionUrl);
+            }
+          }}
+        >
+          {summary.retailerCount > 0
+            ? `판매처 ${summary.retailerCount}곳 비교`
+            : canOpenInformation ? '제품 정보 보기' : canCompareRetailers ? '판매처 확인' : '판매처 준비 중'}
           <ArrowIcon />
         </button>
       </div>
@@ -690,13 +705,26 @@ function OfferComparisonDialog({
                     {offer.listPriceAmount !== undefined && offer.priceAmount !== undefined && offer.listPriceAmount > offer.priceAmount && (
                       <del>{formatPrice(offer.listPriceAmount, offer.currency)}</del>
                     )}
-                    <strong>{formatPrice(offer.priceAmount, offer.currency)}</strong>
+                    <strong>
+                      {offer.priceAmount !== undefined
+                        ? formatPrice(offer.priceAmount, offer.currency)
+                        : '판매처에서 가격 확인'}
+                    </strong>
                   </div>
                 </div>
                 <div className="offer-meta">
-                  <span className={`availability availability--${offer.availability}`}>{availabilityLabel(offer)}</span>
-                  {offer.isStale && <span className="stale-badge">정보 업데이트 필요</span>}
-                  <span>{formatCheckedAt(offer.checkedAt)}</span>
+                  {offer.isLinkOnly ? (
+                    <>
+                      <span className="availability availability--unknown">판매처에서 확인</span>
+                      <span>가격·재고는 판매처의 최신 정보를 확인해 주세요.</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className={`availability availability--${offer.availability}`}>{availabilityLabel(offer)}</span>
+                      {offer.isStale && <span className="stale-badge">정보 업데이트 필요</span>}
+                      <span>{formatCheckedAt(offer.checkedAt)}</span>
+                    </>
+                  )}
                 </div>
                 {offer.isAffiliate && (
                   <p className="affiliate-disclosure">
@@ -716,14 +744,16 @@ function OfferComparisonDialog({
                     });
                   }}
                 >
-                  {offer.clickUrl ? '판매처에서 확인' : '구매 링크 준비 중'}
+                  {offer.clickUrl
+                    ? offer.isLinkOnly ? `${offer.retailerName}에서 보기` : '판매처에서 확인'
+                    : '구매 링크 준비 중'}
                   {offer.clickUrl && <ArrowIcon />}
                 </button>
               </article>
             ))}
           </div>
         ) : (
-          <div className="offer-empty" role="status">현재 확인 가능한 판매처가 없어요.</div>
+          <div className="offer-empty" role="status">아직 연결된 판매처가 없어요. 제품 정보 보기에서 상세 정보를 확인해 주세요.</div>
         )}
 
         {loading && offers.length > 0 && <p className="offer-refreshing" role="status">최신 정보를 확인 중이에요.</p>}
@@ -740,7 +770,7 @@ function LoadingPanel() {
         <span />
       </div>
       <h2>딱 맞는 제품을 찾고 있어요</h2>
-      <p>검증 상품과 글로벌 오픈 카탈로그의 성분을 비교 중이에요.</p>
+      <p>여러 상품의 성분과 피부 적합도를 비교하고 있어요.</p>
       <div className="loading-steps" aria-hidden="true">
         <span className="is-active" />
         <span />
@@ -1129,7 +1159,7 @@ function App() {
                   <span>5</span>
                   <div>
                     <h2>예산은 어느 정도인가요?</h2>
-                    <p>최근 확인된 판매가가 있는 제품만 예산 조건에 포함돼요.</p>
+                    <p>가격 정보가 없는 제품은 판매처에서 직접 확인할 수 있어요.</p>
                   </div>
                 </div>
                 <div className="chip-group">
@@ -1226,11 +1256,6 @@ function App() {
           <div className="results-screen">
             <section className="results-heading">
               <span className="eyebrow">맞춤 분석 완료</span>
-              {result?.catalogTotal && (
-                <p className="catalog-count">
-                  현재 {new Intl.NumberFormat('ko-KR').format(result.catalogTotal)}개 제품 데이터가 있어요 · 선택 조건에 맞는 모든 후보를 비교했어요
-                </p>
-              )}
               <h1>{result?.items.length || 0}개 제품을 골랐어요</h1>
               <p>{result?.summary}</p>
             </section>
@@ -1269,11 +1294,14 @@ function App() {
             <div className="guardrail-note">
               <strong>구매 전 확인해 주세요</strong>
               <p>피부 반응은 개인마다 달라요. 민감 피부는 소량으로 패치 테스트하고, 가격·재고는 판매처에서 다시 확인해 주세요.</p>
-              <p>Open Beauty Facts 데이터는 ODbL, 상품 이미지는 CC BY-SA 조건으로 제공돼요. 최신 덤프를 매일 확인하지만 개별 커뮤니티 상품 정보는 오래됐거나 누락될 수 있어요.</p>
-              <div className="license-links" aria-label="Open Beauty Facts 라이선스">
-                <button type="button" onClick={() => openInformationUrl(OBF_DATA_LICENSE_URL)}>데이터 ODbL 1.0</button>
-                <button type="button" onClick={() => openInformationUrl(OBF_IMAGE_LICENSE_URL)}>이미지 CC BY-SA 3.0</button>
-              </div>
+              <details className="data-source-details">
+                <summary>데이터 출처 안내</summary>
+                <p>일부 공개 상품 정보는 오래됐거나 누락될 수 있어요. Open Beauty Facts 데이터는 ODbL, 상품 이미지는 CC BY-SA 조건으로 제공돼요.</p>
+                <div className="license-links" aria-label="Open Beauty Facts 라이선스">
+                  <button type="button" onClick={() => openInformationUrl(OBF_DATA_LICENSE_URL)}>데이터 ODbL 1.0</button>
+                  <button type="button" onClick={() => openInformationUrl(OBF_IMAGE_LICENSE_URL)}>이미지 CC BY-SA 3.0</button>
+                </div>
+              </details>
             </div>
 
             <button type="button" className="secondary-button" onClick={goHome}>조건 바꿔 다시 찾기</button>

@@ -78,6 +78,12 @@ deletion. Their short TTL therefore disables stale links automatically; an
 explicit successful feed record or source configuration change reactivates or
 deactivates the corresponding offer.
 
+Link-only retailer destinations are evaluated separately from price freshness.
+They never provide a current price or stock claim, but their short-lived signed
+redirect can remain available after the legacy price observation expires. The
+redirect still requires an active offer and retailer plus an exact HTTPS domain
+allowlist and target fingerprint.
+
 ## Safe outbound redirects
 
 Clients never receive an arbitrary user-controlled destination. The backend:

@@ -17,6 +17,33 @@ from .localization import (
 from .models import Product, ProductScore, Recommendation, SkinProfile
 
 
+_OPERATIONAL_PRICE_CAUTION_PREFIXES = (
+    "price is missing, so cannot verify under",
+    "checked price is missing, so cannot verify under",
+    "checked price is missing, so cannot verify over",
+    "Olive Young price is missing, so cannot verify under",
+    "excluded because listed price exceeds requested maximum",
+    "excluded because checked price exceeds requested maximum",
+    "excluded because checked price is below requested minimum",
+    "excluded because Olive Young snapshot price exceeds requested maximum",
+)
+
+
+def _customer_cautions(score: ProductScore, language: str | None) -> list[str]:
+    """Return safety and product-fit cautions, not ranking diagnostics.
+
+    Missing or stale price is represented by the commerce UI. Repeating an
+    internal budget-check message inside the recommendation reason makes the
+    product copy noisy and can expose implementation terminology.
+    """
+
+    return [
+        translate_caution(caution, language)
+        for caution in score.cautions
+        if not caution.startswith(_OPERATIONAL_PRICE_CAUTION_PREFIXES)
+    ]
+
+
 def product_to_dict(product: Product) -> dict[str, Any]:
     return {
         "id": product.id,
@@ -113,7 +140,7 @@ def score_to_dict(score: ProductScore, language: str | None = "en", personalized
         "reasons": score.reasons,
         "display_reasons": [translate_reason(reason, language) for reason in score.reasons],
         "cautions": score.cautions,
-        "display_cautions": [translate_caution(caution, language) for caution in score.cautions],
+        "display_cautions": _customer_cautions(score, language),
         "evidence": score.evidence,
         "display_evidence": [translate_evidence(evidence, language) for evidence in score.evidence],
         "matched_ingredients": score.matched_ingredients,
@@ -187,7 +214,7 @@ def recommendation_to_dict(
 
 def fallback_personalized_reason(score: ProductScore, language: str | None = "en") -> str:
     reasons = [translate_reason(reason, language) for reason in score.reasons[:3]]
-    cautions = [translate_caution(caution, language) for caution in score.cautions[:1]]
+    cautions = _customer_cautions(score, language)[:1]
     if language == "ko":
         if reasons and cautions:
             return f"검색 조건과 맞는 근거는 {' '.join(reasons)} 다만 {cautions[0]}"

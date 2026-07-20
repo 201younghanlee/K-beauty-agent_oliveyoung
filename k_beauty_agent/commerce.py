@@ -797,7 +797,12 @@ class CommerceService:
         if freshness == "fresh" and price_amount is None:
             price_status = "unknown"
         affiliate_active = row.get("affiliate_status") == "active" and bool(row.get("affiliate_url"))
-        token = self.create_redirect_token(row["id"], now=now) if freshness != "stale" else None
+        # Legacy catalog rows are link-only retailer destinations. Their old
+        # price and stock data stays hidden, but the allowlisted product/search
+        # page can still be opened so customers can check the current offer at
+        # the retailer. Live feed offers keep the stricter stale-link block.
+        link_only = row["source_kind"] == "legacy_catalog"
+        token = self.create_redirect_token(row["id"], now=now) if freshness != "stale" or link_only else None
         return {
             "id": row["id"],
             "variant_id": row["variant_id"],
@@ -824,6 +829,7 @@ class CommerceService:
                 "stale_after": _iso_timestamp(row.get("stale_after")),
             },
             "redirect_url": f"/r/{token}" if token else None,
+            "link_only": link_only,
             "affiliate": {
                 "active": affiliate_active,
                 "enabled": affiliate_active,
@@ -915,7 +921,7 @@ class CommerceService:
                 """
                 SELECT
                     o.id, o.destination_url, o.affiliate_url, o.affiliate_program_id,
-                    o.checked_at, o.stale_after,
+                    o.checked_at, o.stale_after, o.source_kind,
                     r.allowed_domains_json, ap.status AS affiliate_status
                 FROM offers o
                 JOIN retailers r ON r.id = o.retailer_id
@@ -926,7 +932,10 @@ class CommerceService:
             ).fetchone()
         if row is None:
             raise RedirectTokenError("Offer is unavailable")
-        if _freshness(row["checked_at"], row["stale_after"], now) == "stale":
+        if (
+            _freshness(row["checked_at"], row["stale_after"], now) == "stale"
+            and row["source_kind"] != "legacy_catalog"
+        ):
             raise RedirectTokenError("Offer data is stale")
         return row
 

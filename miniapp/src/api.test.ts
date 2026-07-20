@@ -149,6 +149,28 @@ describe('normalizeResponse', () => {
     expect(result.items[0].reason).toBe('요청한 제품군과 일치해요. · 예산 안에서 확인됐어요.');
   });
 
+  it('removes legacy price diagnostics while keeping customer safety cautions', () => {
+    const result = normalizeResponse({
+      results: [{
+        personalized_reason: '피부 고민에 맞는 성분을 포함해요. 다만 checked 가격 데이터가 없어 최대 가격 조건을 확인할 수 없음: ₩50,000',
+        display_cautions: [
+          'checked 가격 데이터가 없어 최대 가격 조건을 확인할 수 없음: ₩50,000',
+          '민감 피부는 패치 테스트를 권장해요.',
+        ],
+        product: {
+          id: 'clean-copy',
+          name: 'Clean Copy Serum',
+          brand: 'Example',
+          category: 'serum',
+          ingredients: [],
+        },
+      }],
+    });
+
+    expect(result.items[0].reason).toBe('피부 고민에 맞는 성분을 포함해요.');
+    expect(result.items[0].cautions).toEqual(['민감 피부는 패치 테스트를 권장해요.']);
+  });
+
   it('rejects malformed top-level responses', () => {
     expect(() => normalizeResponse(null)).toThrow('서버 응답 형식을 확인할 수 없어요.');
   });
@@ -192,6 +214,7 @@ describe('normalizeOffersResponse', () => {
       isStale: false,
       checkedAt: '2026-07-20T10:30:00Z',
       clickUrl: 'https://k-beauty-recommendation-agent-gafd.onrender.com/r/signed-token',
+      isLinkOnly: false,
       isAffiliate: true,
       affiliateLabel: '광고·제휴',
       affiliateDisclosure: '구매 시 수수료를 받을 수 있어요.',
@@ -217,6 +240,29 @@ describe('normalizeOffersResponse', () => {
       isStale: true,
       clickUrl: undefined,
       isAffiliate: false,
+    }));
+  });
+
+  it('keeps a signed retailer destination for a link-only offer without showing a stale price', () => {
+    const offers = normalizeOffersResponse({
+      offers: [{
+        id: 'oliveyoung-link',
+        retailer: { name: 'Olive Young' },
+        price: { amount: null, currency: 'KRW', status: 'stale' },
+        stock_status: 'unknown',
+        freshness: { status: 'stale', checked_at: '2026-05-01T00:00:00Z' },
+        redirect_url: '/r/signed-link-only-token',
+        link_only: true,
+        affiliate: { active: false },
+      }],
+    });
+
+    expect(offers[0]).toEqual(expect.objectContaining({
+      retailerName: 'Olive Young',
+      priceKrw: undefined,
+      isStale: true,
+      isLinkOnly: true,
+      clickUrl: 'https://k-beauty-recommendation-agent-gafd.onrender.com/r/signed-link-only-token',
     }));
   });
 

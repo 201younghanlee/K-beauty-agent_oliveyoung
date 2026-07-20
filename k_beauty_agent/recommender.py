@@ -104,6 +104,8 @@ class IngredientHybridRecommender:
             "budget_preference" in profile.sensitivities
             and profile.min_price_krw is None
             and profile.min_price_usd is None
+            and profile.max_price_krw is None
+            and profile.max_price_usd is None
         ):
             if product.price_krw is not None:
                 budget_score = max(0.0, min(1.0, (40000.0 - product.price_krw) / 40000.0))

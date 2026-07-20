@@ -133,10 +133,11 @@ Fetch the current retailer choices for a recommended product separately:
 curl http://127.0.0.1:8000/api/v2/products/PRODUCT_ID/offers
 ```
 
-V2 product responses intentionally omit legacy storefront URLs. Fresh offers
-and explicitly link-only offers expose a relative, signed `redirect_url`; stale
-offers return `null`. Use the supplied value as-is instead of opening catalog
-source URLs.
+V2 product responses intentionally omit raw storefront URLs. Fresh commerce
+offers and explicitly link-only retailer destinations expose a relative,
+signed `redirect_url`. A stale price/stock feed returns `null`, while an
+allowlisted link-only destination can remain available with its price and stock
+hidden. Use the supplied value as-is instead of opening catalog source URLs.
 
 ## Approved retailer offer sync
 

@@ -28,6 +28,7 @@ export interface RetailOffer {
   isStale: boolean;
   checkedAt?: string;
   clickUrl?: string;
+  isLinkOnly: boolean;
   isAffiliate: boolean;
   affiliateLabel?: string;
   affiliateDisclosure?: string;

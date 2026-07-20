@@ -497,6 +497,12 @@ input:focus-visible {
   border-radius: 14px;
 }
 
+.purchase-button:disabled {
+  color: #8b95a1;
+  background: #e5e8eb;
+  cursor: default;
+}
+
 .privacy-consent label {
   display: flex;
   gap: 10px;
@@ -1011,6 +1017,23 @@ input:focus-visible {
 
 .guardrail-note p + p {
   margin-top: 8px;
+}
+
+.data-source-details {
+  margin-top: 10px;
+  color: #8b95a1;
+  font-size: 12px;
+}
+
+.data-source-details summary {
+  width: fit-content;
+  color: #6b7684;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.data-source-details[open] summary {
+  margin-bottom: 8px;
 }
 
 .secondary-button {
