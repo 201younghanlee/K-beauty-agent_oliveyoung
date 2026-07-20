@@ -1,12 +1,23 @@
 const LANGUAGE_STORAGE_KEY = "kBeautyAgentLanguage";
-const RENDER_API_BASE_URL = "https://k-beauty-recommendation-agent-gafd.onrender.com";
-const API_BASE_URL = window.location.hostname.endsWith("github.io") ? RENDER_API_BASE_URL : "";
+const SESSION_STORAGE_KEY = "kBeautyAgentAnonymousSessionV1";
+const SESSION_ISSUED_AT_KEY = "kBeautyAgentAnonymousSessionIssuedAtV1";
+const SESSION_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+// The public web client is served from the API origin. Cross-origin static
+// previews must opt in through a dedicated origin instead of silently sending
+// anonymous session tokens from the shared github.io origin.
+const API_BASE_URL = "";
+
+let memorySessionToken = "";
+let memorySessionIssuedAt = 0;
 
 const state = {
   lang: readStoredLanguage(),
   recommendationId: null,
   profile: {},
   productsById: new Map(),
+  offerRequests: new Map(),
+  activeOfferProductId: null,
   allProducts: [],
   currentResults: [],
   routineSelectedIds: new Set(),
@@ -54,7 +65,7 @@ const uiText = {
     official: "브랜드 공식몰",
     productSource: "제품 데이터 출처",
     catalogNoticeTitle: "카탈로그 데이터 안내",
-    catalogNotice: "Open Beauty Facts 최신 덤프를 매일 확인하지만 개별 상품명·이미지·전성분은 오래됐거나 누락될 수 있습니다. 민감 피부·알레르기·제외 성분 조건에서는 이 상품을 추천에서 배제하며, 가격과 재고는 판매처에서 다시 확인해 주세요.",
+    catalogNotice: "Open Beauty Facts 최신 덤프를 매일 확인하지만 개별 상품명·이미지·전성분은 오래됐거나 누락될 수 있습니다. 민감 피부·제외 성분 조건에서는 이 상품을 추천에서 배제하며, 알레르기·임신·수유 정보는 받지 않습니다. 가격과 재고는 판매처에서 다시 확인해 주세요.",
     buyLink: "구매 링크",
     recommendedReason: "추천 이유",
     ingredients: "중요 성분",
@@ -88,6 +99,30 @@ const uiText = {
     clearAll: "전체 삭제",
     compareSelected: "선택 제품 비교",
     budgetNone: "제한 없음",
+    compareRetailers: "판매처 비교",
+    offerModalTitle: "판매처와 가격",
+    offerLoading: "최신 판매처 정보를 확인하는 중입니다...",
+    offerLoadFailed: "판매처 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    offerEmpty: "현재 비교할 수 있는 판매처 정보가 없습니다.",
+    lowestPrice: "최저 {price}",
+    legacyPrice: "판매가 {price}",
+    retailerCount: "판매처 {count}곳",
+    freshRetailerCount: "최신 판매처 {count}곳",
+    freshPrice: "최신 가격",
+    stalePrice: "오래된 가격",
+    unknownFreshness: "확인 시점 미상",
+    checkedAt: "확인 {date}",
+    stockIn: "재고 있음",
+    stockOut: "품절",
+    stockPreorder: "예약판매",
+    stockUnknown: "재고 정보 미제공",
+    affiliateBadge: "광고·제휴",
+    affiliateTitle: "광고·제휴 안내",
+    affiliateDisclosure: "일부 판매처 링크를 통해 구매하면 서비스가 수수료를 받을 수 있습니다. 제휴 여부와 수수료는 추천 순위에 영향을 주지 않습니다.",
+    goToRetailer: "판매처에서 확인",
+    noTrackedLink: "안전한 구매 링크 미제공",
+    listPrice: "정가 {price}",
+    offerSummaryUnknown: "판매처에서 현재 가격과 재고를 다시 확인해 주세요.",
   },
   en: {
     statusIdle: "Submit the quiz to see 3-5 recommendation cards here.",
@@ -128,7 +163,7 @@ const uiText = {
     official: "Official",
     productSource: "Product data source",
     catalogNoticeTitle: "Catalog data notice",
-    catalogNotice: "The latest Open Beauty Facts dump is checked daily, but individual community records may be old, incomplete, or incorrect. These rows are excluded for sensitive skin, allergies, and avoid-ingredient requests. Confirm current price and stock with a retailer.",
+    catalogNotice: "The latest Open Beauty Facts dump is checked daily, but individual community records may be old, incomplete, or incorrect. These rows are excluded for sensitive-skin and avoid-ingredient requests; allergy, pregnancy, and nursing data is not accepted. Confirm current price and stock with a retailer.",
     buyLink: "Purchase link",
     recommendedReason: "Why recommended",
     ingredients: "Key ingredients",
@@ -162,6 +197,30 @@ const uiText = {
     clearAll: "Clear all",
     compareSelected: "Compare selected",
     budgetNone: "No limit",
+    compareRetailers: "Compare retailers",
+    offerModalTitle: "Retailers and prices",
+    offerLoading: "Checking the latest retailer information...",
+    offerLoadFailed: "Could not load retailer information. Please try again shortly.",
+    offerEmpty: "There are no retailer offers available to compare right now.",
+    lowestPrice: "From {price}",
+    legacyPrice: "Listed at {price}",
+    retailerCount: "{count} retailers",
+    freshRetailerCount: "{count} current retailers",
+    freshPrice: "Current price",
+    stalePrice: "Stale price",
+    unknownFreshness: "Check time unknown",
+    checkedAt: "Checked {date}",
+    stockIn: "In stock",
+    stockOut: "Out of stock",
+    stockPreorder: "Pre-order",
+    stockUnknown: "Stock not provided",
+    affiliateBadge: "Ad · affiliate",
+    affiliateTitle: "Ad and affiliate disclosure",
+    affiliateDisclosure: "We may earn a commission when you purchase through some retailer links. Affiliate status and commission do not affect recommendation ranking.",
+    goToRetailer: "Check at retailer",
+    noTrackedLink: "Secure purchase link unavailable",
+    listPrice: "List {price}",
+    offerSummaryUnknown: "Confirm the current price and stock with the retailer.",
   },
 };
 
@@ -320,32 +379,6 @@ const valueLabels = {
   },
 };
 
-const koreanOfficialMallByBrand = {
-  "AXIS-Y": "https://www.axis-y.com/",
-  Abib: "https://www.abib.com/",
-  Aestura: "https://www.aestura.com/web/main.do",
-  Anua: "https://www.anua.kr/",
-  "Banila Co": "https://www.banila.com/",
-  "Beauty of Joseon": "https://beautyofjoseon.com/",
-  COSRX: "https://www.cosrx.co.kr/",
-  "Dr.G": "https://www.dr-g.co.kr/main",
-  ETUDE: "https://www.etude.com/brand/beautizen/korean/",
-  Goodal: "https://clubclio.co.kr/",
-  "Haruharu Wonder": "https://haruharuwonder.com/",
-  "I'm From": "https://www.imfrom.co.kr/",
-  Illiyoon: "https://www.illiyoon.com/",
-  Isntree: "https://www.isntree.com/",
-  Mediheal: "https://www.medihealshop.com/",
-  Mixsoon: "https://www.mixsoon.co.kr/",
-  Needly: "https://needly.co.kr/",
-  Numbuzin: "https://www.numbuzin.com/",
-  "Round Lab": "https://roundlab.co.kr/",
-  SKIN1004: "https://www.skin1004.com/",
-  TIRTIR: "https://tirtir.co.kr/",
-  Torriden: "https://www.torriden.com/",
-  "ma:nyo": "https://www.manyo.co.kr/",
-};
-
 function text(key) {
   return uiText[state.lang]?.[key] || uiText.ko[key] || key;
 }
@@ -360,6 +393,7 @@ function setLanguage(lang) {
   renderCompareSummary();
   renderCatalogs();
   if (state.selections.compare_products?.length) renderCompareTable();
+  if (state.activeOfferProductId) renderOfferModal(state.productsById.get(state.activeOfferProductId));
   if (window.lucide) window.lucide.createIcons();
 }
 
@@ -395,7 +429,7 @@ function applyStaticLanguage() {
   setTextAny([".nav-link[href='/compare']", ".nav-link[href='./#compare']"], en ? "Product Compare" : "제품 비교");
   setTextAny([".nav-link[href='/routine']", ".nav-link[href='./#routine']"], en ? "Personal Routine" : "개인 루틴");
   setText(".hero-copy .eyebrow", en ? "K-beauty agent for ingredients and budget" : "성분과 예산을 함께 보는 K-뷰티 에이전트");
-  setText(".hero-cta-wrap > span", en ? "Reflects skin type, allergies, and budget in about 30 seconds." : "30초 안에 피부 타입, 알러지, 예산을 반영합니다.");
+  setText(".hero-cta-wrap > span", en ? "Reflects skin type, ingredients to avoid, and budget in about 30 seconds." : "30초 안에 피부 타입, 제외 성분, 예산을 반영합니다.");
   setText("#quiz .mini-label", en ? "Skin Quiz" : "피부 퀴즈");
   setText("#quiz h2", en ? "Choose your skin and buying conditions" : "피부와 구매 조건을 선택해 주세요");
   setText("#recommendation .mini-label", en ? "Recommendations" : "추천 결과");
@@ -417,14 +451,28 @@ function applyStaticLanguage() {
   setText("#catalogNoticeTitle", text("catalogNoticeTitle"));
   setText("#catalogNoticeText", text("catalogNotice"));
   setText("#ingredientModalTitle", text("modalTitle"));
+  setText("#affiliateDisclosure strong", text("affiliateTitle"));
+  setText("#affiliateDisclosure p", text("affiliateDisclosure"));
+  setText("#offerModalEyebrow", text("compareRetailers"));
+  setText("#offerModalTitle", text("offerModalTitle"));
 
   setLegend(0, en ? "Skin type" : "피부 타입");
   setLegend(1, en ? "Product type" : "제품 타입");
   setLegend(2, en ? "Main concern" : "주요 고민");
   setLegend(3, en ? "Texture preference" : "선호 제형");
-  setLegend(4, en ? "Budget and allergies" : "예산과 알러지");
+  setLegend(4, en ? "Budget and ingredients to avoid" : "예산과 제외 성분");
   setText("label[for='budget']", en ? "Max budget" : "최대 예산");
-  setText(".text-field span", en ? "Allergy / ingredients to avoid" : "알러지/피해야 할 성분");
+  setText(".text-field span", en ? "Ingredients to avoid" : "피하고 싶은 성분");
+  const privacyCopy = document.querySelector(".privacy-consent > span");
+  const privacyLink = document.querySelector("#privacyPolicyLink");
+  if (privacyCopy && privacyLink) {
+    privacyCopy.textContent = en
+      ? "I agree that a controlled profile made from my skin selections and ingredients to avoid may be processed for personalized recommendations for up to 30 days. "
+      : "맞춤 추천을 위해 선택한 피부 정보와 피해야 할 성분으로 만든 통제 프로필을 최대 30일간 처리하는 데 동의합니다. ";
+    privacyLink.textContent = en ? "Privacy notice" : "개인정보 처리 안내";
+    privacyLink.href = apiUrl("/privacy");
+    privacyCopy.append(privacyLink);
+  }
   setText("#quizForm button[type='submit'] span", en ? "Get recommendations" : "추천 받기");
   setText("#followUpForm button span", en ? "Apply" : "반영");
   setPlaceholder("#allergyInput", en ? "e.g. fragrance, snail, alcohol, hyaluronic acid" : "예: 향료, 달팽이, 알코올, 히알루론산");
@@ -483,9 +531,6 @@ function setChoiceLabels(en) {
           "Moisturizer",
           "Lotion / emulsion",
           "Sunscreen",
-          "Sheet mask",
-          "Eye cream",
-          "Lip care",
           "Basic routine",
           "No selection",
         ]
@@ -500,9 +545,6 @@ function setChoiceLabels(en) {
           "수분크림",
           "로션/에멀전",
           "선크림",
-          "마스크팩",
-          "아이크림",
-          "립케어",
           "기초 루틴",
           "선택 안함",
         ],
@@ -521,6 +563,11 @@ function setChoiceLabels(en) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+  document.addEventListener("error", (event) => {
+    if (event.target instanceof HTMLImageElement && event.target.matches("[data-product-image]")) {
+      markImageMissing(event.target);
+    }
+  }, true);
   applyPageMode();
   window.addEventListener("hashchange", applyPageMode);
   bindEvents();
@@ -553,6 +600,9 @@ function bindEvents() {
   });
   document.querySelectorAll("[data-lang]").forEach((button) => {
     button.addEventListener("click", () => setLanguage(button.dataset.lang));
+  });
+  document.querySelector("#offerModal")?.addEventListener("hidden.bs.modal", () => {
+    state.activeOfferProductId = null;
   });
 }
 
@@ -602,12 +652,64 @@ function apiUrl(path) {
   return `${API_BASE_URL}${path}`;
 }
 
+function createAnonymousSessionToken() {
+  const bytes = new Uint8Array(24);
+  window.crypto.getRandomValues(bytes);
+  const body = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `kb_${body}`;
+}
+
+function validSessionIssuedAt(value) {
+  const issuedAt = Number(value);
+  const age = Date.now() - issuedAt;
+  return Number.isFinite(issuedAt) && age >= 0 && age < SESSION_MAX_AGE_MS;
+}
+
+function getAnonymousSessionToken() {
+  if (SESSION_PATTERN.test(memorySessionToken) && validSessionIssuedAt(memorySessionIssuedAt)) {
+    return memorySessionToken;
+  }
+
+  let storedToken = "";
+  let storedIssuedAt = 0;
+  try {
+    storedToken = window.localStorage.getItem(SESSION_STORAGE_KEY) || "";
+    storedIssuedAt = Number(window.localStorage.getItem(SESSION_ISSUED_AT_KEY) || 0);
+  } catch {
+    // Web Storage가 막힌 환경에서는 현재 페이지의 메모리 세션을 사용합니다.
+  }
+
+  const reuseStored = SESSION_PATTERN.test(storedToken) && validSessionIssuedAt(storedIssuedAt);
+  memorySessionToken = reuseStored ? storedToken : createAnonymousSessionToken();
+  memorySessionIssuedAt = reuseStored ? storedIssuedAt : Date.now();
+  try {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, memorySessionToken);
+    window.localStorage.setItem(SESSION_ISSUED_AT_KEY, String(memorySessionIssuedAt));
+  } catch {
+    // 요청 헤더에는 메모리에 보관한 토큰을 계속 사용합니다.
+  }
+  return memorySessionToken;
+}
+
+function rotateAnonymousSessionToken() {
+  memorySessionToken = "";
+  memorySessionIssuedAt = 0;
+  try {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    window.localStorage.removeItem(SESSION_ISSUED_AT_KEY);
+  } catch {
+    // 저장소가 막혀 있어도 메모리 토큰은 제거되었습니다.
+  }
+  return getAnonymousSessionToken();
+}
+
 async function apiFetch(path, options = {}) {
   return fetch(apiUrl(path), {
-    credentials: "include",
     ...options,
+    credentials: "omit",
     headers: {
       ...(options.headers || {}),
+      "X-KBeauty-Session": getAnonymousSessionToken(),
     },
   });
 }
@@ -623,25 +725,305 @@ async function apiJson(path, options = {}) {
   if (!response.ok) {
     const error = new Error(data.detail || `${response.status} ${response.statusText}`);
     error.data = data;
+    error.status = response.status;
     throw error;
   }
   return data;
+}
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function firstTextValue(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function numberValue(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function dateTextValue(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const milliseconds = value < 1_000_000_000_000 ? value * 1000 : value;
+      return new Date(milliseconds).toISOString();
+    }
+  }
+  return "";
+}
+
+function booleanValue(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) return true;
+    if (["false", "0", "no"].includes(normalized)) return false;
+  }
+  return null;
+}
+
+function normalizeAvailability(...values) {
+  const value = firstTextValue(...values).toLowerCase().replace(/[\s-]+/g, "_");
+  if (["in_stock", "available", "on_sale", "판매중", "재고있음"].includes(value)) return "in_stock";
+  if (["out_of_stock", "sold_out", "unavailable", "품절", "재고없음"].includes(value)) return "out_of_stock";
+  if (["preorder", "pre_order", "예약판매"].includes(value)) return "preorder";
+  return "unknown";
+}
+
+function backendRedirectUrl(value) {
+  const raw = firstTextValue(value);
+  if (!raw) return "";
+  try {
+    const apiOrigin = new URL(apiUrl("/"), window.location.href).origin;
+    const parsed = new URL(raw, `${apiOrigin}/`);
+    const localHttp = parsed.protocol === "http:" && ["localhost", "127.0.0.1"].includes(parsed.hostname);
+    if ((!localHttp && parsed.protocol !== "https:") || parsed.origin !== apiOrigin || !parsed.pathname.startsWith("/r/")) return "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function normalizeOffer(raw, index = 0) {
+  if (!isRecord(raw)) return null;
+  const retailer = isRecord(raw.retailer) ? raw.retailer : {};
+  const priceData = isRecord(raw.price) ? raw.price : {};
+  const listPriceData = isRecord(raw.list_price)
+    ? raw.list_price
+    : isRecord(raw.listPrice)
+      ? raw.listPrice
+      : {};
+  const stock = isRecord(raw.stock) ? raw.stock : {};
+  const freshness = isRecord(raw.freshness) ? raw.freshness : {};
+  const affiliateDetails = isRecord(raw.affiliate) ? raw.affiliate : {};
+  const retailerName = firstTextValue(
+    raw.retailer_name,
+    raw.retailerName,
+    raw.merchant_name,
+    raw.store_name,
+    retailer.name,
+  );
+  if (!retailerName) return null;
+
+  const explicitFresh = booleanValue(raw.is_fresh ?? raw.isFresh ?? raw.fresh ?? freshness.is_fresh);
+  const explicitStale = booleanValue(raw.is_stale ?? raw.isStale ?? raw.stale ?? freshness.is_stale);
+  const freshnessStatus = firstTextValue(
+    typeof raw.freshness === "string" ? raw.freshness : "",
+    raw.freshness_status,
+    raw.freshnessStatus,
+    freshness.status,
+  ).toLowerCase();
+  const freshnessState = explicitStale === true || explicitFresh === false || ["stale", "expired"].includes(freshnessStatus)
+    ? "stale"
+    : explicitFresh === true || explicitStale === false || ["fresh", "current"].includes(freshnessStatus)
+      ? "fresh"
+      : "unknown";
+  const affiliate = booleanValue(
+    raw.is_affiliate
+      ?? raw.isAffiliate
+      ?? (isRecord(raw.affiliate)
+        ? affiliateDetails.active ?? affiliateDetails.enabled ?? affiliateDetails.is_affiliate
+        : raw.affiliate),
+  );
+  const relationship = firstTextValue(raw.relationship, raw.link_type, raw.linkType).toLowerCase();
+  const retailerId = firstTextValue(raw.retailer_id, raw.retailerId, retailer.id);
+  const currency = firstTextValue(raw.currency, priceData.currency).toUpperCase() || "KRW";
+  const priceAmount = numberValue(
+    raw.price_krw,
+    raw.priceKrw,
+    raw.sale_price_krw,
+    raw.salePriceKrw,
+    raw.price_amount,
+    raw.current_price,
+    priceData.amount_krw,
+    priceData.amount,
+  );
+  const listPriceAmount = numberValue(
+    raw.list_price_krw,
+    raw.listPriceKrw,
+    raw.original_price_krw,
+    raw.originalPriceKrw,
+    listPriceData.amount_krw,
+    listPriceData.amount,
+    raw.list_price,
+    priceData.list_amount_krw,
+    priceData.list_amount,
+  );
+
+  return {
+    id: firstTextValue(raw.id, raw.offer_id, raw.offerId) || `${retailerId || retailerName}-${index}`,
+    retailerId,
+    retailerName,
+    currency,
+    priceAmount,
+    listPriceAmount,
+    priceKrw: currency === "KRW" ? priceAmount : null,
+    listPriceKrw: currency === "KRW" ? listPriceAmount : null,
+    availability: normalizeAvailability(
+      raw.availability,
+      raw.availability_status,
+      raw.availabilityStatus,
+      raw.stock_status,
+      raw.stockStatus,
+      stock.status,
+    ),
+    freshness: freshnessState,
+    checkedAt: dateTextValue(
+      raw.checked_at,
+      raw.checkedAt,
+      raw.price_checked_at,
+      raw.priceCheckedAt,
+      raw.observed_at,
+      raw.updated_at,
+      freshness.checked_at,
+    ),
+    clickUrl: backendRedirectUrl(raw.redirect_url ?? raw.redirectUrl ?? raw.click_url ?? raw.clickUrl),
+    isAffiliate: affiliate ?? relationship === "affiliate",
+    affiliateLabel: firstTextValue(
+      raw.affiliate_label,
+      raw.affiliateLabel,
+      affiliateDetails.label,
+    ),
+    affiliateDisclosure: firstTextValue(
+      raw.affiliate_disclosure,
+      raw.affiliateDisclosure,
+      raw.disclosure,
+      affiliateDetails.disclosure,
+    ),
+  };
+}
+
+function normalizeCommerce(raw) {
+  if (!isRecord(raw)) return null;
+  const retailerCount = numberValue(raw.retailer_count, raw.retailerCount) || 0;
+  const offerCount = numberValue(raw.offer_count, raw.offerCount) ?? retailerCount;
+  const freshOfferCount = numberValue(raw.fresh_offer_count, raw.freshOfferCount) || 0;
+  const lowestFreshPriceKrw = numberValue(
+    raw.lowest_fresh_price_krw,
+    raw.lowestFreshPriceKrw,
+    raw.lowest_price_krw,
+    raw.lowestPriceKrw,
+  );
+  const hasAffiliateOffers = booleanValue(raw.has_affiliate_offers ?? raw.hasAffiliateOffers ?? raw.has_affiliate) || false;
+  if (!retailerCount && !offerCount && !freshOfferCount && lowestFreshPriceKrw === null) return null;
+  return { retailerCount, offerCount, freshOfferCount, lowestFreshPriceKrw, hasAffiliateOffers };
+}
+
+function legacyOfferFromProduct(product) {
+  const priceKrw = numberValue(product.price_krw, product.oliveyoung_price_krw);
+  const retailerName = firstTextValue(product.retailer_name) || (product.oliveyoung_url ? "Olive Young" : "");
+  const clickUrl = backendRedirectUrl(product.redirect_url ?? product.click_url);
+  if (priceKrw === null && !retailerName && !clickUrl) return null;
+  return {
+    id: `legacy-${product.id}`,
+    retailerId: "",
+    retailerName: retailerName || (state.lang === "en" ? "Retailer" : "판매처"),
+    priceKrw,
+    listPriceKrw: null,
+    priceAmount: priceKrw,
+    listPriceAmount: null,
+    currency: "KRW",
+    availability: "unknown",
+    freshness: "unknown",
+    checkedAt: dateTextValue(product.price_checked_at, product.oliveyoung_verified_at),
+    clickUrl,
+    isAffiliate: false,
+    affiliateDisclosure: "",
+  };
+}
+
+function normalizeProduct(rawProduct, context = {}) {
+  if (!isRecord(rawProduct)) return rawProduct;
+  const product = { ...rawProduct };
+  const commerce = normalizeCommerce(product.commerce ?? context.commerce ?? context.offer_summary);
+  const offerCollections = [
+    context.offers,
+    context.retail_offers,
+    product.offers,
+    product.retail_offers,
+    isRecord(product.offer_summary) ? product.offer_summary.offers : null,
+  ];
+  const rawOffers = offerCollections.find((value) => Array.isArray(value)) || [];
+  const seen = new Set();
+  const offers = rawOffers
+    .map((offer, index) => normalizeOffer(offer, index))
+    .filter((offer) => {
+      if (!offer || seen.has(offer.id)) return false;
+      seen.add(offer.id);
+      return true;
+    });
+  const legacyOffer = offers.length ? null : legacyOfferFromProduct(product);
+  product.offers = legacyOffer ? [legacyOffer] : offers;
+  product.commerce = commerce || commerceFromOffers(product.offers);
+  return product;
+}
+
+function commerceFromOffers(offers) {
+  const active = (offers || []).filter((offer) => offer.availability !== "out_of_stock");
+  const fresh = active.filter((offer) => offer.freshness === "fresh");
+  const retailers = new Set(active.map((offer) => offer.retailerId || offer.retailerName).filter(Boolean));
+  const freshPrices = fresh.map((offer) => offer.priceKrw).filter((value) => Number.isFinite(value));
+  return {
+    retailerCount: retailers.size,
+    offerCount: active.length,
+    freshOfferCount: fresh.length,
+    lowestFreshPriceKrw: freshPrices.length ? Math.min(...freshPrices) : null,
+    hasAffiliateOffers: active.some((offer) => offer.isAffiliate),
+  };
+}
+
+function normalizeRecommendationItems(results) {
+  return (Array.isArray(results) ? results : []).map((item) => {
+    if (!isRecord(item) || !isRecord(item.product)) return item;
+    return { ...item, product: normalizeProduct(item.product, item) };
+  });
 }
 
 function emptySelections() {
   return { saved_ids: [], compare_ids: [], saved_products: [], compare_products: [], total_cost_krw: 0 };
 }
 
+function normalizeSelections(data) {
+  const value = isRecord(data) ? data : {};
+  return {
+    ...emptySelections(),
+    ...value,
+    saved_products: (Array.isArray(value.saved_products) ? value.saved_products : []).map((product) => normalizeProduct(product)),
+    compare_products: (Array.isArray(value.compare_products) ? value.compare_products : []).map((product) => normalizeProduct(product)),
+  };
+}
+
 async function loadProducts() {
   try {
     const products = [];
     let cursor = 0;
+    let endpoint = "/api/v2/products";
     do {
-      const data = await apiJson(`/api/products?limit=100&cursor=${cursor}`);
+      let data;
+      try {
+        data = await apiJson(`${endpoint}?limit=100&cursor=${cursor}`);
+      } catch (error) {
+        if (cursor === 0 && endpoint === "/api/v2/products" && [404, 405].includes(error?.status)) {
+          endpoint = "/api/products";
+          continue;
+        }
+        throw error;
+      }
       products.push(...(data.products || []));
       cursor = Number.isInteger(data.next_cursor) ? data.next_cursor : -1;
     } while (cursor >= 0 && products.length < 10_000);
-    state.allProducts = products;
+    state.allProducts = products.map((product) => normalizeProduct(product));
     state.productsById.clear();
     state.allProducts.forEach((product) => state.productsById.set(product.id, product));
   } catch {
@@ -663,13 +1045,11 @@ async function loadSession() {
 
 async function loadSelections() {
   try {
-    state.selections = await apiJson("/api/selections");
+    state.selections = normalizeSelections(await apiJson("/api/selections"));
   } catch {
     state.selections = emptySelections();
   }
-  for (const product of [...(state.selections.saved_products || []), ...(state.selections.compare_products || [])]) {
-    state.productsById.set(product.id, product);
-  }
+  await hydrateSelectedProducts();
   renderRoutine();
   renderCompareSummary();
   renderCompareTable();
@@ -681,7 +1061,7 @@ async function submitRecommendation(isFollowUp, query) {
   setStatus(isFollowUp ? text("followUpStatus") : text("submitStatus"));
   let data;
   try {
-    data = await apiJson(isFollowUp ? "/api/follow-up" : "/api/recommend", {
+    const requestOptions = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -689,20 +1069,32 @@ async function submitRecommendation(isFollowUp, query) {
         limit: 5,
         use_openai: false,
         language: state.lang,
+        privacy_consent: Boolean(document.querySelector("#privacyConsent")?.checked),
+        privacy_policy_version: "2026-07-20",
       }),
-    });
+    };
+    const path = isFollowUp ? "/api/v2/follow-up" : "/api/v2/recommend";
+    try {
+      data = await apiJson(path, requestOptions);
+    } catch (error) {
+      if ([404, 405].includes(error?.status)) {
+        data = await apiJson(isFollowUp ? "/api/follow-up" : "/api/recommend", requestOptions);
+      } else {
+        throw error;
+      }
+    }
   } catch (error) {
     setStatus(error?.data?.detail || text("backendConnectionFailed"));
     return;
   }
   state.recommendationId = data.recommendation_id;
   state.profile = data.profile || {};
-  state.currentResults = data.results || [];
-  (data.results || []).forEach((item) => state.productsById.set(item.product.id, item.product));
+  state.currentResults = normalizeRecommendationItems(data.results);
+  state.currentResults.forEach((item) => state.productsById.set(item.product.id, item.product));
   renderProfile(state.profile);
-  renderResults(data.results || []);
+  renderResults(state.currentResults);
   document.querySelector("#followUpQuery").value = "";
-  const countText = text(isFollowUp ? "followUpResultCount" : "resultCount").replace("{count}", String((data.results || []).length));
+  const countText = text(isFollowUp ? "followUpResultCount" : "resultCount").replace("{count}", String(state.currentResults.length));
   setStatus(countText);
   document.querySelector("#recommendation").scrollIntoView({ behavior: "smooth", block: "start" });
   if (window.lucide) window.lucide.createIcons();
@@ -872,6 +1264,7 @@ function renderResults(results) {
   container.querySelectorAll("[data-ingredient]").forEach((button) => {
     button.addEventListener("click", () => showIngredient(button.dataset.productId, button.dataset.ingredient));
   });
+  bindOfferButtons(container);
 }
 
 function renderProductCard(item) {
@@ -901,7 +1294,7 @@ function renderProductCard(item) {
             <p class="brand">${escapeHtml(product.brand)}</p>
             <h3>${escapeHtml(displayProductName(product))}</h3>
           </div>
-          <strong class="price">${price(product)}</strong>
+          ${productPriceSummaryHtml(product)}
         </div>
         <p class="meta">${escapeHtml(displayValue(product.category))} · ${skinCompatibility(product)}</p>
         <div class="note-list">
@@ -928,8 +1321,7 @@ function renderProductCard(item) {
           <button class="secondary ${isCompare ? "selected" : ""}" type="button" data-select-product data-list-type="compare" data-product-id="${product.id}">
             <i data-lucide="scale"></i><span>${text("compare")}</span>
           </button>
-          ${linkButton(product, "oliveyoung", "oliveyoung")}
-          ${linkButton(product, "official", "official")}
+          ${offerComparisonButton(product)}
           ${sourceLinkButton(product)}
         </div>
       </div>
@@ -959,11 +1351,11 @@ async function toggleSelection(productId, listType) {
 
 async function setSelection(productId, listType, selected) {
   try {
-    state.selections = await apiJson("/api/selections", {
+    state.selections = normalizeSelections(await apiJson("/api/selections", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ product_id: productId, list_type: listType, selected }),
-    });
+    }));
     return true;
   } catch {
     setStatus(text("backendConnectionFailed"));
@@ -972,8 +1364,15 @@ async function setSelection(productId, listType, selected) {
 }
 
 async function hydrateSelectedProducts() {
-  for (const product of [...(state.selections.saved_products || []), ...(state.selections.compare_products || [])]) {
-    state.productsById.set(product.id, product);
+  for (const key of ["saved_products", "compare_products"]) {
+    state.selections[key] = (state.selections[key] || []).map((legacyProduct) => {
+      const catalogProduct = state.productsById.get(legacyProduct.id);
+      const product = catalogProduct
+        ? normalizeProduct({ ...legacyProduct, ...catalogProduct })
+        : legacyProduct;
+      state.productsById.set(product.id, product);
+      return product;
+    });
   }
 }
 
@@ -1005,7 +1404,7 @@ function renderCompareTable() {
       </thead>
       <tbody>
         <tr><th>${text("image")}</th>${products.map((product) => `<td><div class="compare-thumb ${product.image_url ? "" : "image-missing"}" data-image-frame>${productImage(product)}${imageSourceBadge(product)}</div></td>`).join("")}</tr>
-        <tr><th>${text("cost")}</th>${products.map((product) => `<td>${price(product)}</td>`).join("")}</tr>
+        <tr><th>${text("cost")}</th>${products.map((product) => `<td>${productPriceSummaryHtml(product, true)}${offerComparisonButton(product, true)}</td>`).join("")}</tr>
         <tr><th>${text("skinCompatibility")}</th>${products.map((product) => `<td>${skinCompatibility(product)}</td>`).join("")}</tr>
         <tr><th>${text("ingredient")}</th>${products.map((product) => `<td>${escapeHtml(displayIngredients(product.ingredients, 8))}</td>`).join("")}</tr>
         <tr><th>${text("review")}</th>${products.map((product) => `<td>${escapeHtml(reviewSummary(product, "noReviewShort"))}${reviewExcerpts(product, { compact: true })}</td>`).join("")}</tr>
@@ -1015,6 +1414,7 @@ function renderCompareTable() {
   wrap.querySelectorAll("[data-remove-selection]").forEach((button) => {
     button.addEventListener("click", () => removeSelection(button.dataset.productId, button.dataset.listType));
   });
+  bindOfferButtons(wrap);
 }
 
 async function clearCompareSelections() {
@@ -1037,9 +1437,12 @@ function renderRoutine() {
   const selectedTotal = products
     .filter((product) => state.routineSelectedIds.has(product.id))
     .reduce((sum, product) => sum + productKrwValue(product), 0);
+  const productsWithFreshPrice = products.filter((product) => productKrwValue(product) > 0).length;
+  const selectedProducts = products.filter((product) => state.routineSelectedIds.has(product.id));
+  const selectedWithFreshPrice = selectedProducts.filter((product) => productKrwValue(product) > 0).length;
   updateRoutineSelectAll(products);
-  document.querySelector("#routineTotal").textContent = krw(total || state.selections.total_cost_krw || 0);
-  document.querySelector("#routineSelectedTotal").textContent = krw(selectedTotal);
+  document.querySelector("#routineTotal").textContent = products.length && !productsWithFreshPrice ? text("needPrice") : krw(total);
+  document.querySelector("#routineSelectedTotal").textContent = selectedProducts.length && !selectedWithFreshPrice ? text("needPrice") : krw(selectedTotal);
   const empty = document.querySelector("#routineEmpty");
   empty.textContent = text("routineEmpty");
   empty.classList.toggle("hidden", products.length > 0);
@@ -1065,8 +1468,7 @@ function renderRoutine() {
         </div>
         <div class="routine-actions">
           <button class="secondary" type="button" data-remove-selection data-list-type="saved" data-product-id="${product.id}">${text("remove")}</button>
-          ${linkButton(product, "oliveyoung", "oliveyoung")}
-          ${linkButton(product, "official", "official")}
+          ${offerComparisonButton(product)}
           ${sourceLinkButton(product)}
         </div>
       </article>`
@@ -1082,6 +1484,7 @@ function renderRoutine() {
   document.querySelector("#routineList").querySelectorAll("[data-remove-selection]").forEach((button) => {
     button.addEventListener("click", () => removeSelection(button.dataset.productId, button.dataset.listType));
   });
+  bindOfferButtons(document.querySelector("#routineList"));
 }
 
 function updateRoutineSelectAll(products) {
@@ -1119,7 +1522,7 @@ function syncRoutineSelectedProducts(products) {
 }
 
 function productKrwValue(product) {
-  return Number(product?.price_krw || product?.oliveyoung_price_krw || 0);
+  return Number(product?.commerce?.lowestFreshPriceKrw || 0);
 }
 
 function showIngredient(productId, ingredientName) {
@@ -1146,15 +1549,21 @@ async function resetSession() {
     setStatus(text("backendConnectionFailed"));
     return;
   }
+  rotateAnonymousSessionToken();
   state.recommendationId = null;
   state.profile = {};
   state.currentResults = [];
+  state.activeOfferProductId = null;
+  state.offerRequests.clear();
   state.selections = { saved_ids: [], compare_ids: [], saved_products: [], compare_products: [], total_cost_krw: 0 };
   state.routineSelectedIds.clear();
   state.routineKnownSavedIds.clear();
   document.querySelector("#results").innerHTML = "";
   document.querySelector("#compareTable").innerHTML = "";
   document.querySelector("#compareTable").classList.add("hidden");
+  const privacyConsent = document.querySelector("#privacyConsent");
+  if (privacyConsent) privacyConsent.checked = false;
+  bootstrap.Modal.getInstance(document.querySelector("#offerModal"))?.hide();
   setStatus(text("reset"));
   renderProfile({});
   renderRoutine();
@@ -1183,8 +1592,9 @@ function renderSelectionCatalog(containerId, listType) {
           <div>
             <span>${escapeHtml(product.brand)} · ${escapeHtml(displayValue(product.category))}</span>
             <h3>${escapeHtml(displayProductName(product))}</h3>
-            <p>${price(product)}</p>
+            <div class="catalog-price">${productPriceSummaryHtml(product, true)}</div>
           </div>
+          ${offerComparisonButton(product, true)}
           <button class="secondary ${selected ? "selected" : ""}" type="button" data-select-product data-list-type="${listType}" data-product-id="${product.id}">
             ${selected ? text("selected") : listType === "compare" ? text("compareAdd") : text("routineAdd")}
           </button>
@@ -1194,6 +1604,7 @@ function renderSelectionCatalog(containerId, listType) {
   container.querySelectorAll("[data-select-product]").forEach((button) => {
     button.addEventListener("click", () => toggleSelection(button.dataset.productId, button.dataset.listType));
   });
+  bindOfferButtons(container);
 }
 
 async function removeSelection(productId, listType) {
@@ -1283,53 +1694,208 @@ function cleanReviewSummary(summary) {
 }
 
 function price(product) {
-  if (product.price_krw || product.oliveyoung_price_krw) return krw(product.price_krw || product.oliveyoung_price_krw);
-  if (product.price_usd) return `$${Number(product.price_usd).toFixed(2)}`;
+  const lowestFresh = numberValue(product?.commerce?.lowestFreshPriceKrw);
+  if (lowestFresh !== null) return text("lowestPrice").replace("{price}", krw(lowestFresh));
+  const visibleOffer = sortedOffers(product).find((offer) => offer.priceKrw !== null && offer.availability !== "out_of_stock");
+  if (visibleOffer) return text("legacyPrice").replace("{price}", krw(visibleOffer.priceKrw));
+  if (product?.price_usd) return `$${Number(product.price_usd).toFixed(2)}`;
   return text("needPrice");
+}
+
+function productPriceSummaryHtml(product, compact = false) {
+  const commerce = product?.commerce || commerceFromOffers(product?.offers || []);
+  const visibleOffer = sortedOffers(product).find((offer) => offer.priceKrw !== null && offer.availability !== "out_of_stock");
+  const retailerCount = Number(commerce?.retailerCount || 0);
+  const lowestFresh = numberValue(commerce?.lowestFreshPriceKrw);
+  const details = [];
+  if (lowestFresh !== null && commerce?.freshOfferCount) {
+    details.push(text("freshRetailerCount").replace("{count}", String(commerce.freshOfferCount)));
+  } else if (retailerCount) {
+    details.push(text("retailerCount").replace("{count}", String(retailerCount)));
+  }
+  if (lowestFresh === null && visibleOffer) details.push(freshnessLabel(visibleOffer.freshness));
+  return `
+    <div class="price-stack ${compact ? "compact" : ""}">
+      <strong class="price">${escapeHtml(price(product))}</strong>
+      ${details.length ? `<span>${escapeHtml(details.join(" · "))}</span>` : ""}
+      ${commerce?.hasAffiliateOffers ? `<span class="affiliate-mini-badge">${text("affiliateBadge")}</span>` : ""}
+    </div>
+  `;
+}
+
+function sortedOffers(product) {
+  const freshnessRank = { fresh: 0, unknown: 1, stale: 2 };
+  const availabilityRank = { in_stock: 0, unknown: 1, out_of_stock: 2 };
+  return [...(product?.offers || [])].sort((left, right) => {
+    const availabilityDifference = (availabilityRank[left.availability] ?? 1) - (availabilityRank[right.availability] ?? 1);
+    if (availabilityDifference) return availabilityDifference;
+    const freshnessDifference = (freshnessRank[left.freshness] ?? 1) - (freshnessRank[right.freshness] ?? 1);
+    if (freshnessDifference) return freshnessDifference;
+    const currencyDifference = (left.currency === "KRW" ? 0 : 1) - (right.currency === "KRW" ? 0 : 1);
+    if (currencyDifference) return currencyDifference;
+    const sameCurrency = left.currency === right.currency;
+    const leftPrice = sameCurrency ? left.priceAmount ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
+    const rightPrice = sameCurrency ? right.priceAmount ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
+    return leftPrice - rightPrice || left.retailerName.localeCompare(right.retailerName);
+  });
+}
+
+function offerComparisonButton(product, compact = false) {
+  const commerce = product?.commerce || {};
+  const hasOffers = Number(commerce.offerCount || commerce.retailerCount || 0) > 0 || Boolean(product?.offers?.length);
+  if (!hasOffers) return "";
+  const legacyOnly = product.offers?.length === 1 && String(product.offers[0].id).startsWith("legacy-");
+  return `
+    <button class="secondary offer-compare-button ${compact ? "compact" : ""}" type="button" data-compare-offers data-product-id="${escapeHtml(product.id)}">
+      <i data-lucide="store"></i><span>${legacyOnly ? text("goToRetailer") : text("compareRetailers")}</span>
+    </button>
+  `;
+}
+
+function bindOfferButtons(container) {
+  if (!container) return;
+  container.querySelectorAll("[data-compare-offers]").forEach((button) => {
+    button.addEventListener("click", () => showOfferComparison(button.dataset.productId));
+  });
+}
+
+async function showOfferComparison(productId) {
+  const initialProduct = state.productsById.get(productId);
+  if (!initialProduct) return;
+  state.activeOfferProductId = productId;
+  renderOfferModal(initialProduct, text("offerLoading"));
+  bootstrap.Modal.getOrCreateInstance(document.querySelector("#offerModal")).show();
+
+  let request = state.offerRequests.get(productId);
+  if (!request) {
+    request = apiJson(`/api/v2/products/${encodeURIComponent(productId)}/offers`);
+    state.offerRequests.set(productId, request);
+  }
+  try {
+    const data = await request;
+    const updatedProduct = productWithOfferResponse(state.productsById.get(productId) || initialProduct, data);
+    replaceProductInState(updatedProduct);
+    rerenderProductViews();
+    if (state.activeOfferProductId === productId) renderOfferModal(updatedProduct);
+  } catch {
+    if (state.activeOfferProductId === productId) {
+      const fallbackProduct = state.productsById.get(productId) || initialProduct;
+      renderOfferModal(fallbackProduct, fallbackProduct.offers?.length ? "" : text("offerLoadFailed"));
+    }
+  } finally {
+    state.offerRequests.delete(productId);
+  }
+}
+
+function productWithOfferResponse(product, data) {
+  const payload = isRecord(data) ? data : {};
+  const nested = isRecord(payload.product) ? payload.product : {};
+  const dataBlock = isRecord(payload.data) ? payload.data : {};
+  const offers = [payload.offers, payload.retail_offers, nested.offers, dataBlock.offers, payload.items]
+    .find((value) => Array.isArray(value)) || [];
+  const commerce = payload.commerce || payload.offer_summary || payload.summary || nested.commerce || dataBlock.commerce || product.commerce;
+  return normalizeProduct({ ...product, ...nested, offers, commerce }, { offers, commerce });
+}
+
+function replaceProductInState(product) {
+  state.productsById.set(product.id, product);
+  state.allProducts = state.allProducts.map((item) => item.id === product.id ? product : item);
+  state.currentResults = state.currentResults.map((item) => item.product?.id === product.id ? { ...item, product } : item);
+  for (const key of ["saved_products", "compare_products"]) {
+    state.selections[key] = (state.selections[key] || []).map((item) => item.id === product.id ? product : item);
+  }
+}
+
+function rerenderProductViews() {
+  renderResults(state.currentResults);
+  renderRoutine();
+  renderCompareSummary();
+  if (state.selections.compare_products?.length) renderCompareTable();
+  renderCatalogs();
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function renderOfferModal(product, statusMessage = "") {
+  if (!product) return;
+  const offers = sortedOffers(product);
+  setText("#offerModalEyebrow", text("compareRetailers"));
+  setText("#offerModalTitle", displayProductName(product));
+  setText("#offerModalSubtitle", text("offerModalTitle"));
+  setText("#offerModalStatus", statusMessage);
+  const list = document.querySelector("#offerModalList");
+  list.innerHTML = offers.length ? offers.map(renderOfferRow).join("") : `<div class="offer-empty">${text("offerEmpty")}</div>`;
+
+  const affiliateOffers = offers.filter((offer) => offer.isAffiliate);
+  const disclosure = document.querySelector("#offerModalDisclosure");
+  if (affiliateOffers.length) {
+    const sourceDisclosures = [...new Set(affiliateOffers.map((offer) => offer.affiliateDisclosure).filter(Boolean))];
+    disclosure.innerHTML = `<strong>${text("affiliateTitle")}</strong><p>${escapeHtml(sourceDisclosures[0] || text("affiliateDisclosure"))}</p>`;
+    disclosure.classList.remove("hidden");
+  } else {
+    disclosure.innerHTML = "";
+    disclosure.classList.add("hidden");
+  }
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function renderOfferRow(offer) {
+  const priceText = offer.priceAmount !== null ? money(offer.priceAmount, offer.currency) : text("needPrice");
+  const showListPrice = offer.listPriceAmount !== null && offer.priceAmount !== null && offer.listPriceAmount > offer.priceAmount;
+  const clickControl = offer.clickUrl
+    ? `<a class="primary offer-outbound" href="${escapeHtml(offer.clickUrl)}" target="_blank" rel="nofollow sponsored noreferrer">${text("goToRetailer")}<i data-lucide="external-link"></i></a>`
+    : `<span class="offer-outbound disabled" aria-disabled="true">${text("noTrackedLink")}</span>`;
+  return `
+    <article class="offer-row ${offer.freshness === "stale" ? "is-stale" : ""}">
+      <div class="offer-retailer">
+        <div>
+          <h3>${escapeHtml(offer.retailerName)}</h3>
+          ${offer.isAffiliate ? `<span class="affiliate-badge">${escapeHtml(offer.affiliateLabel || text("affiliateBadge"))}</span>` : ""}
+        </div>
+        <div class="offer-badges">
+          <span class="availability-badge ${offer.availability}">${availabilityLabel(offer.availability)}</span>
+          <span class="freshness-badge ${offer.freshness}">${freshnessLabel(offer.freshness)}</span>
+        </div>
+      </div>
+      <div class="offer-price-block">
+        <strong>${priceText}</strong>
+        ${showListPrice ? `<span>${text("listPrice").replace("{price}", money(offer.listPriceAmount, offer.currency))}</span>` : ""}
+        <small>${escapeHtml(offer.checkedAt ? text("checkedAt").replace("{date}", formatOfferCheckedAt(offer.checkedAt)) : text("unknownFreshness"))}</small>
+      </div>
+      ${clickControl}
+    </article>
+  `;
+}
+
+function availabilityLabel(value) {
+  if (value === "in_stock") return text("stockIn");
+  if (value === "out_of_stock") return text("stockOut");
+  if (value === "preorder") return text("stockPreorder");
+  return text("stockUnknown");
+}
+
+function freshnessLabel(value) {
+  return value === "fresh" ? text("freshPrice") : value === "stale" ? text("stalePrice") : text("unknownFreshness");
+}
+
+function formatOfferCheckedAt(value) {
+  const raw = String(value || "");
+  const timestamp = Date.parse(raw);
+  if (Number.isFinite(timestamp)) {
+    return new Intl.DateTimeFormat(state.lang === "en" ? "en-GB" : "ko-KR", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(timestamp));
+  }
+  const date = raw.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  return date || raw;
 }
 
 function sourceLinkButton(product) {
   if (product.catalog_source !== "open_beauty_facts" || !product.source_url) return "";
   return `<a class="link-button" href="${escapeHtml(product.source_url)}" target="_blank" rel="noreferrer">${text("productSource")}</a>`;
-}
-
-function linkButton(product, type, labelKey) {
-  if (
-    product.catalog_source === "open_beauty_facts"
-    && ((type === "oliveyoung" && !product.oliveyoung_url) || (type === "official" && !product.official_url))
-  ) return "";
-  const href = productLink(product, type);
-  const disabled = href === "#";
-  const attrs = disabled
-    ? 'href="#" aria-disabled="true" tabindex="-1"'
-    : `href="${escapeHtml(href)}" target="_blank" rel="noreferrer"`;
-  return `<a class="link-button ${disabled ? "disabled" : ""}" ${attrs}>${text(labelKey)}</a>`;
-}
-
-function productLink(product, type) {
-  if (type === "oliveyoung") {
-    if (state.lang === "ko") return product.oliveyoung_url || "#";
-    return globalOliveYoungUrl(product);
-  }
-  if (type === "official") {
-    if (state.lang === "ko") return koreanOfficialMall(product) || officialUrl(product.official_url);
-    return englishUrl(product.official_url, product.source_url, product.image_verified_source);
-  }
-  return "#";
-}
-
-function globalOliveYoungUrl(product) {
-  const query = product?.name || product?.display_name_ko || "";
-  if (!query) return "#";
-  return `https://global.oliveyoung.com/display/search?query=${encodeURIComponent(query)}`;
-}
-
-function officialUrl(url) {
-  return isOfficialUrl(url) ? url : "#";
-}
-
-function koreanOfficialMall(product) {
-  return koreanOfficialMallByBrand[product?.brand] || "";
 }
 
 function koreanSourceUrl(...urls) {
@@ -1356,34 +1922,10 @@ function isKoreanUrl(url) {
   return false;
 }
 
-function isOfficialUrl(url) {
-  if (!url) return false;
-  const normalized = String(url).toLowerCase();
-  if (
-    normalized.includes("oliveyoung.") ||
-    normalized.includes("glowpick.") ||
-    normalized.includes("hwahae.") ||
-    normalized.includes("incidecoder.") ||
-    normalized.includes("amazon.") ||
-    normalized.includes("ulta.") ||
-    normalized.includes("marksandspencer.")
-  ) {
-    return false;
-  }
-  if (isKoreanUrl(normalized)) return true;
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    const path = parsed.pathname.toLowerCase();
-    return (host === "www.torriden.com" || host === "torriden.com") && path.includes("/goods/");
-  } catch (error) {
-    return false;
-  }
-}
 
 function productImage(product) {
   if (!product.image_url) return "";
-  return `<img src="${escapeHtml(product.image_url)}" alt="${escapeHtml(displayProductName(product))}" loading="lazy" onerror="markImageMissing(this)" />`;
+  return `<img src="${escapeHtml(product.image_url)}" alt="${escapeHtml(displayProductName(product))}" loading="lazy" data-product-image />`;
 }
 
 function markImageMissing(image) {
@@ -1436,6 +1978,18 @@ function ingredientList(ingredient, key) {
 
 function krw(value) {
   return `₩${Number(value || 0).toLocaleString("ko-KR")}`;
+}
+
+function money(value, currency = "KRW") {
+  try {
+    return new Intl.NumberFormat(state.lang === "en" ? "en-GB" : "ko-KR", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: currency === "KRW" ? 0 : 2,
+    }).format(Number(value));
+  } catch {
+    return `${currency} ${Number(value).toLocaleString()}`;
+  }
 }
 
 function renderBullets(items) {

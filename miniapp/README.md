@@ -4,7 +4,7 @@
 
 ## 로컬 실행
 
-Node.js 20 이상과 pnpm이 필요합니다.
+Node.js 24 이상과 pnpm이 필요합니다.
 
 ```bash
 cp .env.example .env
@@ -28,6 +28,11 @@ pnpm build
 ```
 
 `pnpm build`는 SDK 2.x의 `ait build`를 실행하고, `granite.config.ts` 안의 `web.commands.build`를 통해 TypeScript와 Vite 빌드를 먼저 검증합니다. 생성된 `.ait` 파일을 앱인토스 콘솔에 업로드합니다.
+
+맞춤 기록은 일반 개인정보 처리 동의 후에만 서버에 저장됩니다. 공개 앱은
+알레르기·임신·수유·질환 자유문장을 받지 않고, 원문 대신 허용된 퀴즈 선택과
+검증 성분 토큰만 저장합니다. 기기 찜 캐시는 마지막 앱 사용 후 30일에 만료되며
+`내 데이터 삭제`가 서버 데이터와 로컬 저장소를 함께 지웁니다.
 
 ## 콘솔 설정
 

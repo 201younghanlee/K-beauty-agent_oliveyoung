@@ -69,6 +69,39 @@ def product_to_dict(product: Product) -> dict[str, Any]:
     }
 
 
+def product_to_v2_dict(product: Product, commerce_summary: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Serialize a normalized product master without bypassing safe offer links.
+
+    Version 1 keeps its legacy retailer fields. Version 2 deliberately removes
+    those fields and exposes them through the commerce summary and offer API.
+    """
+
+    data = product_to_dict(product)
+    for key in (
+        "price_usd",
+        "oliveyoung_url",
+        "oliveyoung_price_krw",
+        "oliveyoung_verified_at",
+        "purchase_url",
+        "retailer_name",
+        "price_krw",
+        "price_checked_at",
+    ):
+        data.pop(key, None)
+    data["commerce"] = commerce_summary or {
+        "offer_count": 0,
+        "retailer_count": 0,
+        "fresh_offer_count": 0,
+        "stale_offer_count": 0,
+        "unknown_offer_count": 0,
+        "best_current_price": None,
+        "lowest_fresh_price_krw": None,
+        "has_affiliate_offers": False,
+        "offers_url": f"/api/v2/products/{product.id}/offers",
+    }
+    return data
+
+
 def score_to_dict(score: ProductScore, language: str | None = "en", personalized_reason: str | None = None) -> dict[str, Any]:
     return {
         "product": product_to_dict(score.product),
@@ -94,6 +127,8 @@ def score_to_dict(score: ProductScore, language: str | None = "en", personalized
 
 def profile_to_public_dict(profile: SkinProfile) -> dict[str, Any]:
     data = asdict(profile)
+    for field in ("allergies", "pregnant_or_nursing", "location_or_climate"):
+        data.pop(field, None)
     return data
 
 

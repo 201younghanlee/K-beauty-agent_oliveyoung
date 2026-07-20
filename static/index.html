@@ -10,9 +10,14 @@
       integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
       crossorigin="anonymous"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260624-render-api-v2" />
-    <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-    <script defer src="/static/app.js?v=20260624-render-api-v2"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260720-commerce-v2" />
+    <script
+      defer
+      src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"
+      integrity="sha384-uTYyvsSSUZeaPhb5RbKlQa0zY/WpX/QHfvg2mczXyBQOpkWPEDy9lczyp+w7SKXu"
+      crossorigin="anonymous"
+    ></script>
+    <script defer src="/static/app.js?v=20260720-commerce-v2"></script>
   </head>
   <body>
     <nav class="navbar navbar-expand-lg sticky-top app-nav">
@@ -63,7 +68,7 @@
                 <i data-lucide="clipboard-list"></i>
                 <span>Quick skin quiz</span>
               </a>
-              <span>30초 안에 피부 타입, 알러지, 예산을 반영합니다.</span>
+              <span>30초 안에 피부 타입, 제외 성분, 예산을 반영합니다.</span>
             </div>
           </div>
         </div>
@@ -100,9 +105,6 @@
                 <label><input type="checkbox" name="productType" value="수분크림" /> 수분크림</label>
                 <label><input type="checkbox" name="productType" value="로션" /> 로션/에멀전</label>
                 <label><input type="checkbox" name="productType" value="선크림" /> 선크림</label>
-                <label><input type="checkbox" name="productType" value="마스크팩" /> 마스크팩</label>
-                <label><input type="checkbox" name="productType" value="아이크림" /> 아이크림</label>
-                <label><input type="checkbox" name="productType" value="립케어" /> 립케어</label>
                 <label><input type="checkbox" name="productType" value="기초 루틴" /> 기초 루틴</label>
                 <label><input type="checkbox" name="productType" value="" data-none /> 선택 안함</label>
               </div>
@@ -134,7 +136,7 @@
             </fieldset>
 
             <fieldset class="panel wide">
-              <legend>예산과 알러지</legend>
+              <legend>예산과 제외 성분</legend>
               <div class="budget-row">
                 <label for="budget">최대 예산</label>
                 <select id="budget" class="form-select">
@@ -149,10 +151,19 @@
                 <strong id="budgetValue">₩30,000</strong>
               </div>
               <label class="text-field">
-                <span>알러지/피해야 할 성분</span>
+                <span>피하고 싶은 성분</span>
                 <input id="allergyInput" class="form-control" placeholder="예: 향료, 달팽이, 알코올, 히알루론산" />
+                <small>알레르기·임신·수유 정보는 입력하지 말고 피할 성분명만 적어 주세요.</small>
               </label>
             </fieldset>
+
+            <label class="privacy-consent wide" for="privacyConsent">
+              <input id="privacyConsent" type="checkbox" required />
+              <span>
+                맞춤 추천을 위해 선택한 피부 정보와 피해야 할 성분으로 만든 통제 프로필을 최대 30일간 처리하는 데 동의합니다.
+                <a id="privacyPolicyLink" href="https://k-beauty-recommendation-agent-gafd.onrender.com/privacy" target="_blank" rel="noreferrer">개인정보 처리 안내</a>
+              </span>
+            </label>
 
             <div class="quiz-actions wide">
               <button class="primary" type="submit">
@@ -187,10 +198,17 @@
           <p id="recommendationGuide" class="recommendation-guide">
             추천 카드는 적합성 점수 순으로 정렬되며, 카드 안의 중요 성분은 추천 근거에서 중요한 순서로 표시됩니다.
           </p>
+          <aside id="affiliateDisclosure" class="affiliate-disclosure">
+            <i data-lucide="badge-info" aria-hidden="true"></i>
+            <div>
+              <strong>제휴 링크 안내</strong>
+              <p>일부 판매처 링크를 통해 구매하면 서비스가 수수료를 받을 수 있습니다. 제휴 여부와 수수료는 추천 순위에 영향을 주지 않습니다.</p>
+            </div>
+          </aside>
           <div id="results" class="product-grid"></div>
           <aside class="catalog-notice">
             <strong id="catalogNoticeTitle">카탈로그 데이터 안내</strong>
-            <p id="catalogNoticeText">Open Beauty Facts 최신 덤프를 매일 확인하지만 개별 상품명·이미지·전성분은 오래됐거나 누락될 수 있습니다. 민감 피부·알레르기·제외 성분 조건에서는 이 상품을 추천에서 배제하며, 가격과 재고는 판매처에서 다시 확인해 주세요.</p>
+            <p id="catalogNoticeText">Open Beauty Facts 최신 덤프를 매일 확인하지만 개별 상품명·이미지·전성분은 오래됐거나 누락될 수 있습니다. 민감 피부·제외 성분 조건에서는 이 상품을 추천에서 배제하며, 알레르기·임신·수유 정보는 받지 않습니다. 가격과 재고는 판매처에서 다시 확인해 주세요.</p>
             <p>
               <a href="https://world.openbeautyfacts.org/data" target="_blank" rel="noreferrer">Open Beauty Facts</a>
               · <a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noreferrer">ODbL 1.0</a>
@@ -261,6 +279,26 @@
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
           </div>
           <div id="ingredientModalBody" class="modal-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade offer-modal" id="offerModal" tabindex="-1" aria-hidden="true" aria-labelledby="offerModalTitle">
+      <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+          <div class="modal-header offer-modal-header">
+            <div>
+              <span id="offerModalEyebrow" class="mini-label">판매처 비교</span>
+              <h2 id="offerModalTitle" class="modal-title fs-5">판매처와 가격</h2>
+              <p id="offerModalSubtitle"></p>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+          </div>
+          <div class="modal-body">
+            <div id="offerModalStatus" class="offer-modal-status" role="status" aria-live="polite"></div>
+            <div id="offerModalList" class="offer-list"></div>
+            <aside id="offerModalDisclosure" class="offer-disclosure hidden"></aside>
+          </div>
         </div>
       </div>
     </div>
