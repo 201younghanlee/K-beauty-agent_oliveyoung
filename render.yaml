@@ -36,7 +36,7 @@ services:
       - key: DATABASE_URL
         value: sqlite:////tmp/k_beauty_agent.sqlite3
       - key: PRODUCT_SOURCE
-        value: curated
+        value: catalog_snapshot
       - key: EXTERNAL_CACHE_URL
         value: sqlite:////tmp/external_product_cache.sqlite3
       - key: KRW_PER_USD

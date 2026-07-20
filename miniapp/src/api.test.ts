@@ -43,10 +43,19 @@ describe('normalizeResponse', () => {
             category: 'toner',
             image_url: '/static/product.png',
             oliveyoung_price_krw: 19_000,
+            purchase_url: 'https://shop.example.com/barrier-toner',
+            retailer_name: 'Example Shop',
+            catalog_source: 'open_beauty_facts',
+            source_url: 'https://world.openbeautyfacts.org/product/123',
+            source_updated_at: '2026-07-19',
+            ingredient_status: 'complete',
+            recommendation_tier: 'eligible',
+            data_license: 'ODbL-1.0',
             ingredients: ['Panthenol'],
           },
         },
       ],
+      product_source_status: { total_products: 4_250 },
     });
 
     expect(result.summary).toBe('선택한 조건을 바탕으로 제품 성분과 피부 적합도를 비교했어요.');
@@ -54,6 +63,11 @@ describe('normalizeResponse', () => {
     expect(result.items[0].product.imageUrl).toBe(
       'https://k-beauty-recommendation-agent-gafd.onrender.com/static/product.png',
     );
+    expect(result.items[0].product.purchaseUrl).toBe('https://shop.example.com/barrier-toner');
+    expect(result.items[0].product.retailerName).toBe('Example Shop');
+    expect(result.items[0].product.catalogSource).toBe('open_beauty_facts');
+    expect(result.items[0].product.sourceUpdatedAt).toBe('2026-07-19');
+    expect(result.catalogTotal).toBe(4_250);
   });
 
   it('prefers localized reasons over legacy mixed-language AI text', () => {

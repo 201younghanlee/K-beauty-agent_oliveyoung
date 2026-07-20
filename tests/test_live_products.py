@@ -89,8 +89,14 @@ class LiveProductDatabaseTest(unittest.TestCase):
         self.assertEqual(product.brand, "COSRX")
         self.assertEqual(product.price_usd, 18.5)
         self.assertEqual(product.image_source_type, "open_beauty_facts")
-        self.assertEqual(product.official_url, "https://world.openbeautyfacts.org/product/B0TEST")
+        self.assertEqual(
+            product.official_url,
+            "https://www.cosrx.com/products/advanced-snail-96-mucin-power-essence",
+        )
+        self.assertEqual(product.source_url, "https://world.openbeautyfacts.org/product/B0TEST")
         self.assertIsNone(product.oliveyoung_url)
+        self.assertEqual(product.catalog_source, "open_beauty_facts")
+        self.assertEqual(product.ingredient_status, "reported")
         self.assertIn("Snail Secretion Filtrate", product.ingredients)
 
     def test_krw_budget_is_converted_for_keyless_search_and_filtered(self) -> None:
@@ -113,6 +119,7 @@ class LiveProductDatabaseTest(unittest.TestCase):
         self.assertEqual(provider.calls[0]["min_price_usd"], 30.0)
         self.assertEqual([product.name for product in products], ["COSRX High Price Korean Skincare Serum"])
         self.assertGreaterEqual(products[0].oliveyoung_price_krw or 0, 30000)
+        self.assertGreaterEqual(products[0].price_krw or 0, 30000)
 
     def test_cosing_empty_result_uses_curated_ingredient_match(self) -> None:
         provider = FakeKeylessProvider(
@@ -275,6 +282,8 @@ class LiveProductDatabaseTest(unittest.TestCase):
         product = products[0]
         self.assertTrue(product.id.startswith("oliveyoung_snapshot-"))
         self.assertEqual(product.oliveyoung_price_krw, 18000)
+        self.assertEqual(product.price_krw, 18000)
+        self.assertEqual(product.purchase_url, product.oliveyoung_url)
         self.assertEqual(product.oliveyoung_url, "https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=A1")
         self.assertEqual(product.image_source_type, "oliveyoung_snapshot")
         self.assertEqual(db.last_source_status["source_used"], "oliveyoung_snapshot")

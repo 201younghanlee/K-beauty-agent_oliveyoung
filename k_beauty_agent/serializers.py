@@ -53,6 +53,18 @@ def product_to_dict(product: Product) -> dict[str, Any]:
         "official_url": product.official_url,
         "texture_tags": list(product.texture_tags),
         "oliveyoung_verified_at": product.oliveyoung_verified_at,
+        "catalog_source": product.catalog_source,
+        "source_product_id": product.source_product_id,
+        "purchase_url": product.purchase_url,
+        "retailer_name": product.retailer_name,
+        "price_krw": product.price_krw,
+        "price_checked_at": product.price_checked_at,
+        "source_updated_at": product.source_updated_at,
+        "fetched_at": product.fetched_at,
+        "ingredient_status": product.ingredient_status,
+        "recommendation_tier": product.recommendation_tier,
+        "data_license": product.data_license,
+        "data_attribution_url": product.data_attribution_url,
         "ingredient_explanations": ingredient_explanations(product.ingredients),
     }
 

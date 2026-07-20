@@ -1,5 +1,7 @@
 # Demo
 
+This document covers the compact reference API in `app/`. The deployed product uses `k_beauty_agent.web`, the multi-source catalog, and the request shape documented in `docs/api_spec.md`.
+
 ## English Request
 
 ```bash

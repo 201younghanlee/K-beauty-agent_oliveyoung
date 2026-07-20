@@ -395,7 +395,9 @@ class LiveProductDatabase:
         categories: list[str] | None = None,
         concerns: list[str] | None = None,
         ingredients: list[str] | None = None,
-        limit: int = 20,
+        exclude_ingredients: list[str] | None = None,
+        require_complete_ingredients: bool = False,
+        limit: int | None = 20,
     ) -> list[Product]:
         profile = analyze_skin_query(query)
         live_query = _live_query(query, categories or profile.desired_categories, ingredients or profile.preferred_ingredients)
@@ -403,9 +405,10 @@ class LiveProductDatabase:
         max_usd = profile.max_price_usd or _krw_to_usd(profile.max_price_krw, self.krw_per_usd)
         provider_products: list[tuple[str, ExternalProduct]] = []
         queried: list[str] = []
+        provider_limit = limit if limit is not None else 100
         for provider in self.providers:
             queried.append(provider.provider_name)
-            external = provider.search(live_query, limit=limit, min_price_usd=min_usd, max_price_usd=max_usd)
+            external = provider.search(live_query, limit=provider_limit, min_price_usd=min_usd, max_price_usd=max_usd)
             provider_products.extend((provider.provider_name, product) for product in external)
             if provider_products:
                 break
@@ -437,7 +440,15 @@ class LiveProductDatabase:
             live_products.append(product)
 
         if live_products:
-            fallback_products = self.fallback.search(query, categories=categories, concerns=concerns, ingredients=ingredients, limit=limit)
+            fallback_products = self.fallback.search(
+                query,
+                categories=categories,
+                concerns=concerns,
+                ingredients=ingredients,
+                exclude_ingredients=exclude_ingredients,
+                require_complete_ingredients=require_complete_ingredients,
+                limit=limit,
+            )
             seen_ids = {product.id for product in live_products}
             combined_products = live_products + [product for product in fallback_products if product.id not in seen_ids]
             self.last_source_status = self.source_status() | {
@@ -448,7 +459,7 @@ class LiveProductDatabase:
                 "curated_fallback_count": len(fallback_products),
                 "message": f"Recommendation is using {used_source} live/cache products with curated fallback candidates.",
             }
-            return combined_products[:limit]
+            return combined_products if limit is None else combined_products[:limit]
 
         self.last_source_status = self.source_status() | {
             "source_used": "curated_fallback",
@@ -457,7 +468,15 @@ class LiveProductDatabase:
             "live_result_count": 0,
             "message": "Keyless live providers returned no usable products; using curated CSV fallback.",
         }
-        return self.fallback.search(query, categories=categories, concerns=concerns, ingredients=ingredients, limit=limit)
+        return self.fallback.search(
+            query,
+            categories=categories,
+            concerns=concerns,
+            ingredients=ingredients,
+            exclude_ingredients=exclude_ingredients,
+            require_complete_ingredients=require_complete_ingredients,
+            limit=limit,
+        )
 
     def _normalize_external_product(self, external_product: ExternalProduct, profile) -> tuple[Product | None, list[str], str | None]:
         matched = _best_curated_match(external_product, self.fallback.products)
@@ -475,6 +494,9 @@ class LiveProductDatabase:
             price_krw = int(round(price_usd * self.krw_per_usd)) if price_usd is not None else matched.oliveyoung_price_krw if matched else None
         source_type = external_product.provider
         is_oliveyoung_snapshot = source_type == "oliveyoung_snapshot"
+        ingredients_from_verified_match = bool(matched and not provider_ingredients and not enrichment_ingredients)
+        ingredient_status = "complete" if ingredients_from_verified_match else "reported" if ingredients else "missing"
+        recommendation_tier = "verified" if ingredients_from_verified_match else "eligible" if ingredients else "discovery"
         raw_reviews = _review_fields_from_raw(external_product.raw or {})
         product_id = f"{source_type}-{_slug(external_product.external_id or external_product.title)}"
         return (
@@ -507,13 +529,33 @@ class LiveProductDatabase:
                 image_url=external_product.image_url,
                 image_verified_source=external_product.detail_url,
                 image_source_type=source_type if external_product.image_url else "none",
-                image_confidence="verified" if external_product.image_url else None,
+                image_confidence=("verified" if is_oliveyoung_snapshot else "reported") if external_product.image_url else None,
                 image_view_type="verified_product" if external_product.image_url else "none",
                 oliveyoung_url=external_product.detail_url if is_oliveyoung_snapshot else None,
                 oliveyoung_price_krw=price_krw,
-                official_url=matched.official_url if is_oliveyoung_snapshot and matched else external_product.detail_url,
+                official_url=matched.official_url if matched else None,
                 texture_tags=matched.texture_tags if matched else (),
                 oliveyoung_verified_at=f"{'Olive Young snapshot' if is_oliveyoung_snapshot else source_type + ' live'} {_now_label()}" if price_krw else None,
+                catalog_source=source_type,
+                source_product_id=external_product.external_id,
+                purchase_url=external_product.detail_url if is_oliveyoung_snapshot else None,
+                retailer_name="Olive Young" if is_oliveyoung_snapshot else None,
+                price_krw=price_krw,
+                price_checked_at=_now_label() if price_krw is not None else None,
+                source_updated_at=_now_label(),
+                fetched_at=_now_label(),
+                ingredient_status=ingredient_status,
+                recommendation_tier=recommendation_tier,
+                data_license=(
+                    "ODbL-1.0 (database); CC-BY-SA-3.0 (product images)"
+                    if source_type == "open_beauty_facts"
+                    else None
+                ),
+                data_attribution_url=(
+                    "https://world.openbeautyfacts.org/data"
+                    if source_type == "open_beauty_facts"
+                    else None
+                ),
             ),
             ingredients,
             matched.id if matched else None,

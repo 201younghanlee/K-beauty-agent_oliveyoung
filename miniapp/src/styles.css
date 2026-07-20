@@ -628,6 +628,13 @@ input:focus-visible {
   font-size: 15px;
 }
 
+.results-heading .catalog-count {
+  margin: 10px 0 -8px;
+  color: #3182f6;
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .results-list,
 .saved-list {
   display: grid;
@@ -779,6 +786,21 @@ input:focus-visible {
   color: #ffb62e;
 }
 
+.source-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 10px 0 0;
+  color: #8b95a1;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.source-row span:first-child {
+  color: #4e5968;
+  font-weight: 700;
+}
+
 .reason-box {
   display: flex;
   gap: 11px;
@@ -879,6 +901,10 @@ input:focus-visible {
   margin: 0;
   font-size: 12px;
   line-height: 1.65;
+}
+
+.guardrail-note p + p {
+  margin-top: 8px;
 }
 
 .secondary-button {

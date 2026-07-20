@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import secrets
 import time
 import uuid
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from pathlib import Path
 from threading import Lock
 from typing import Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field
 from .agent import KBeautyAgent
 from .config import (
     DEFAULT_JSON_DB,
+    DEFAULT_CATALOG_MANIFEST,
+    DEFAULT_GENERATED_CATALOG_CSV,
     DEFAULT_PRODUCTS_CSV,
     DEFAULT_REVIEWS_CSV,
     admin_token,
@@ -63,9 +66,62 @@ def _build_agent() -> KBeautyAgent:
         fallback = ProductDatabase.from_csv(DEFAULT_PRODUCTS_CSV, DEFAULT_REVIEWS_CSV)
     else:
         fallback = ProductDatabase.from_json(DEFAULT_JSON_DB)
-    if product_source() in {"live_keyless", "live_amazon"}:
+    source = product_source()
+    if source in {"catalog_snapshot", "hybrid_catalog"}:
+        try:
+            generated = _load_generated_catalog(DEFAULT_GENERATED_CATALOG_CSV, DEFAULT_CATALOG_MANIFEST)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning("Generated catalog disabled: %s", exc)
+        else:
+            return KBeautyAgent(ProductDatabase.combine(fallback, generated))
+    if source in {"live_keyless", "live_amazon"}:
         return KBeautyAgent(LiveProductDatabase(fallback, cache_path=external_cache_path()))
     return KBeautyAgent(fallback)
+
+
+def _load_generated_catalog(csv_path: Path, manifest_path: Path) -> ProductDatabase:
+    if not csv_path.is_file() or not manifest_path.is_file():
+        raise ValueError("generated CSV and manifest must both exist")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("catalog manifest must be a JSON object")
+    if manifest.get("schema_version") != 1 or manifest.get("catalog_source") != "open_beauty_facts":
+        raise ValueError("catalog manifest schema or source is unsupported")
+
+    digest = hashlib.sha256()
+    with csv_path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != manifest.get("csv_sha256"):
+        raise ValueError("generated catalog SHA-256 does not match its manifest")
+
+    freshness = manifest.get("record_freshness")
+    database = ProductDatabase.from_csv(
+        csv_path,
+        catalog_updated_at=str(manifest.get("generated_at")) if manifest.get("generated_at") else None,
+        catalog_freshness=freshness if isinstance(freshness, dict) else None,
+    )
+    if len(database.products) != manifest.get("product_count"):
+        raise ValueError("generated catalog product count does not match its manifest")
+    actual_category_counts = dict(sorted(Counter(product.category for product in database.products).items()))
+    if actual_category_counts != manifest.get("category_counts"):
+        raise ValueError("generated catalog category counts do not match its manifest")
+    if not manifest.get("generated_at") or not isinstance(freshness, dict):
+        raise ValueError("generated catalog freshness metadata is missing")
+    for product in database.products:
+        if (
+            product.catalog_source != "open_beauty_facts"
+            or product.ingredient_status != "reported"
+            or product.recommendation_tier != "eligible"
+            or not product.source_product_id
+            or not product.source_url
+            or not product.image_url
+            or not product.ingredients
+            or "ODbL-1.0" not in (product.data_license or "")
+            or not product.data_attribution_url
+        ):
+            raise ValueError(f"generated catalog row failed metadata validation: {product.id}")
+    return database
 
 
 app = FastAPI(title="K-Beauty Agent", version="0.2.0")
@@ -297,10 +353,35 @@ def reset_profile(request: Request, response: Response, session_id: str = Depend
 
 
 @app.get("/api/products")
-def products() -> dict[str, object]:
+def products(
+    q: str = Query(default="", max_length=120),
+    category: str | None = Query(default=None, max_length=40),
+    source: str | None = Query(default=None, max_length=80),
+    limit: int = Query(default=50, ge=1, le=100),
+    cursor: int = Query(default=0, ge=0),
+) -> dict[str, object]:
+    if hasattr(agent.database, "catalog_page"):
+        page, total = agent.database.catalog_page(
+            query=q,
+            category=category,
+            source=source,
+            limit=limit,
+            offset=cursor,
+        )
+    else:
+        view = ProductDatabase(list(agent.database.products))
+        page, total = view.catalog_page(query=q, category=category, source=source, limit=limit, offset=cursor)
+    next_cursor = cursor + len(page) if cursor + len(page) < total else None
     return {
-        "products": [product_to_dict(product) for product in agent.database.products]
+        "products": [product_to_dict(product) for product in page],
+        "total": total,
+        "next_cursor": next_cursor,
     }
+
+
+@app.get("/api/catalog/status")
+def catalog_status() -> dict[str, object]:
+    return _product_source_status()
 
 
 @app.post("/api/recommend")
@@ -467,6 +548,10 @@ def _recommend(payload: RecommendRequest, request: Request, response: Response, 
 def _product_source_status() -> dict[str, object]:
     if hasattr(agent.database, "last_source_status"):
         return dict(agent.database.last_source_status)
+    if hasattr(agent.database, "source_status"):
+        status = dict(agent.database.source_status())
+        status["product_source"] = product_source()
+        return status
     return {"product_source": product_source(), "source_used": "curated_csv", "message": "Using curated CSV product database."}
 
 
@@ -483,8 +568,8 @@ def _selection_payload(session_id: str) -> dict[str, object]:
     selections = store.selections_for_session(session_id)
     saved_products = _products_for_ids(selections["saved"])
     compare_products = _products_for_ids(selections["compare"])
-    total_cost_krw = sum(product.oliveyoung_price_krw or 0 for product in saved_products)
-    missing_price_ids = [product.id for product in saved_products if product.oliveyoung_price_krw is None]
+    total_cost_krw = sum(product.price_krw or 0 for product in saved_products)
+    missing_price_ids = [product.id for product in saved_products if product.price_krw is None]
     return {
         "saved_ids": [product.id for product in saved_products],
         "compare_ids": [product.id for product in compare_products],

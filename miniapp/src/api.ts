@@ -212,13 +212,24 @@ function normalizeProduct(rawItem: Record<string, unknown>): Product | null {
     brand: firstText(nested.brand) || '브랜드 정보 없음',
     category: firstText(nested.category) || 'skincare',
     imageUrl: asAbsoluteAssetUrl(firstText(nested.image_url, nested.thumbnail_url)),
-    oliveyoungUrl: firstText(nested.oliveyoung_url, nested.purchase_url) || undefined,
-    priceKrw: asNumber(nested.oliveyoung_price_krw ?? nested.price_krw),
+    oliveyoungUrl: firstText(nested.oliveyoung_url) || undefined,
+    purchaseUrl: firstText(nested.purchase_url, nested.oliveyoung_url) || undefined,
+    sourceUrl: firstText(nested.source_url) || undefined,
+    officialUrl: firstText(nested.official_url) || undefined,
+    retailerName: firstText(nested.retailer_name) || undefined,
+    priceKrw: asNumber(nested.price_krw ?? nested.oliveyoung_price_krw),
+    priceCheckedAt: firstText(nested.price_checked_at, nested.oliveyoung_verified_at) || undefined,
     rating: asNumber(nested.rating),
     reviewCount: asNumber(nested.review_count),
     reviewSummary:
       firstText(nested.review_summary, nested.positive_review, review.summary, review.positive) || undefined,
     ingredients: asStringArray(nested.ingredients),
+    catalogSource: firstText(nested.catalog_source) || undefined,
+    sourceUpdatedAt: firstText(nested.source_updated_at, nested.verified_at) || undefined,
+    ingredientStatus: firstText(nested.ingredient_status) || undefined,
+    recommendationTier: firstText(nested.recommendation_tier) || undefined,
+    dataLicense: firstText(nested.data_license) || undefined,
+    dataAttributionUrl: firstText(nested.data_attribution_url) || undefined,
   };
 }
 
@@ -266,6 +277,8 @@ export function normalizeResponse(payload: unknown): RecommendationResult {
       ? payload.recommendations
       : [];
   const items = rawItems.map(normalizeItem).filter((item): item is RecommendationItem => item !== null);
+  const sourceStatus = isRecord(payload.product_source_status) ? payload.product_source_status : {};
+  const catalogTotal = asNumber(sourceStatus.total_products);
 
   return {
     decision: firstText(payload.decision) || (items.length > 0 ? 'recommend' : 'fallback'),
@@ -273,6 +286,7 @@ export function normalizeResponse(payload: unknown): RecommendationResult {
       ? '선택한 조건을 바탕으로 제품 성분과 피부 적합도를 비교했어요.'
       : '피해야 할 성분을 유지한 상태에서 다른 선택 조건을 조정해 다시 찾아보세요.',
     items,
+    catalogTotal,
   };
 }
 

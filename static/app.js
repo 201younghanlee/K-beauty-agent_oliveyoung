@@ -52,6 +52,9 @@ const uiText = {
     remove: "삭제",
     oliveyoung: "올리브영",
     official: "브랜드 공식몰",
+    productSource: "제품 데이터 출처",
+    catalogNoticeTitle: "카탈로그 데이터 안내",
+    catalogNotice: "Open Beauty Facts 최신 덤프를 매일 확인하지만 개별 상품명·이미지·전성분은 오래됐거나 누락될 수 있습니다. 민감 피부·알레르기·제외 성분 조건에서는 이 상품을 추천에서 배제하며, 가격과 재고는 판매처에서 다시 확인해 주세요.",
     buyLink: "구매 링크",
     recommendedReason: "추천 이유",
     ingredients: "중요 성분",
@@ -123,6 +126,9 @@ const uiText = {
     remove: "Remove",
     oliveyoung: "Olive Young",
     official: "Official",
+    productSource: "Product data source",
+    catalogNoticeTitle: "Catalog data notice",
+    catalogNotice: "The latest Open Beauty Facts dump is checked daily, but individual community records may be old, incomplete, or incorrect. These rows are excluded for sensitive skin, allergies, and avoid-ingredient requests. Confirm current price and stock with a retailer.",
     buyLink: "Purchase link",
     recommendedReason: "Why recommended",
     ingredients: "Key ingredients",
@@ -408,6 +414,8 @@ function applyStaticLanguage() {
   setText("#status", text("statusIdle"));
   setText(".criteria-title", text("criteriaTitle"));
   setText("#recommendationGuide", text("recommendationGuide"));
+  setText("#catalogNoticeTitle", text("catalogNoticeTitle"));
+  setText("#catalogNoticeText", text("catalogNotice"));
   setText("#ingredientModalTitle", text("modalTitle"));
 
   setLegend(0, en ? "Skin type" : "피부 타입");
@@ -626,8 +634,14 @@ function emptySelections() {
 
 async function loadProducts() {
   try {
-    const data = await apiJson("/api/products");
-    state.allProducts = data.products || [];
+    const products = [];
+    let cursor = 0;
+    do {
+      const data = await apiJson(`/api/products?limit=100&cursor=${cursor}`);
+      products.push(...(data.products || []));
+      cursor = Number.isInteger(data.next_cursor) ? data.next_cursor : -1;
+    } while (cursor >= 0 && products.length < 10_000);
+    state.allProducts = products;
     state.productsById.clear();
     state.allProducts.forEach((product) => state.productsById.set(product.id, product));
   } catch {
@@ -916,6 +930,7 @@ function renderProductCard(item) {
           </button>
           ${linkButton(product, "oliveyoung", "oliveyoung")}
           ${linkButton(product, "official", "official")}
+          ${sourceLinkButton(product)}
         </div>
       </div>
     </article>
@@ -1042,7 +1057,7 @@ function renderRoutine() {
         <div class="routine-info">
           <span class="step">${escapeHtml(displayValue(product.category))}</span>
           <h3>${escapeHtml(displayProductName(product))}</h3>
-          <p>${product.oliveyoung_verified_at ? `${text("verifiedDate")} ${formatVerifiedAt(product.oliveyoung_verified_at)}` : ""}</p>
+          <p>${product.source_updated_at || product.oliveyoung_verified_at ? `${text("verifiedDate")} ${formatVerifiedAt(product.source_updated_at || product.oliveyoung_verified_at)}` : ""}</p>
         </div>
         <div class="routine-price">
           <span>${text("cost")}</span>
@@ -1052,6 +1067,7 @@ function renderRoutine() {
           <button class="secondary" type="button" data-remove-selection data-list-type="saved" data-product-id="${product.id}">${text("remove")}</button>
           ${linkButton(product, "oliveyoung", "oliveyoung")}
           ${linkButton(product, "official", "official")}
+          ${sourceLinkButton(product)}
         </div>
       </article>`
     )
@@ -1103,7 +1119,7 @@ function syncRoutineSelectedProducts(products) {
 }
 
 function productKrwValue(product) {
-  return Number(product?.oliveyoung_price_krw || 0);
+  return Number(product?.price_krw || product?.oliveyoung_price_krw || 0);
 }
 
 function showIngredient(productId, ingredientName) {
@@ -1267,12 +1283,21 @@ function cleanReviewSummary(summary) {
 }
 
 function price(product) {
-  if (product.oliveyoung_price_krw) return krw(product.oliveyoung_price_krw);
+  if (product.price_krw || product.oliveyoung_price_krw) return krw(product.price_krw || product.oliveyoung_price_krw);
   if (product.price_usd) return `$${Number(product.price_usd).toFixed(2)}`;
   return text("needPrice");
 }
 
+function sourceLinkButton(product) {
+  if (product.catalog_source !== "open_beauty_facts" || !product.source_url) return "";
+  return `<a class="link-button" href="${escapeHtml(product.source_url)}" target="_blank" rel="noreferrer">${text("productSource")}</a>`;
+}
+
 function linkButton(product, type, labelKey) {
+  if (
+    product.catalog_source === "open_beauty_facts"
+    && ((type === "oliveyoung" && !product.oliveyoung_url) || (type === "official" && !product.official_url))
+  ) return "";
   const href = productLink(product, type);
   const disabled = href === "#";
   const attrs = disabled
@@ -1376,7 +1401,8 @@ function imageSourceBadge(product) {
     oliveyoung_snapshot: text("oliveyoungSnapshotImage"),
     retailer: text("retailerImage"),
   };
-  const label = product.image_confidence === "verified" ? labels[product.image_source_type] : "";
+  const attributedOpenImage = product.image_source_type === "open_beauty_facts" && product.image_confidence === "reported";
+  const label = product.image_confidence === "verified" || attributedOpenImage ? labels[product.image_source_type] : "";
   if (!label) return "";
   const source =
     state.lang === "ko"
