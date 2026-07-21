@@ -3,6 +3,7 @@ import type {
   ApiErrorBody,
   CommerceSummary,
   Product,
+  ProductExternalLink,
   RecommendationItem,
   RecommendationResult,
   RetailOffer,
@@ -480,6 +481,42 @@ function normalizeV2Offers(rawItem: Record<string, unknown>, nested: Record<stri
     });
 }
 
+function normalizeExternalLinks(value: unknown): ProductExternalLink[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const allowedKinds = new Set<ProductExternalLink['kind']>([
+    'brand_official',
+    'ingredient_reference',
+    'data_reference',
+  ]);
+  const seen = new Set<string>();
+  const links: ProductExternalLink[] = [];
+  for (const rawLink of value) {
+    if (!isRecord(rawLink)) {
+      continue;
+    }
+    const kind = firstText(rawLink.kind) as ProductExternalLink['kind'];
+    const label = firstText(rawLink.label);
+    const provider = firstText(rawLink.provider);
+    const rawUrl = firstText(rawLink.url);
+    if (!allowedKinds.has(kind) || !label || !provider || !rawUrl) {
+      continue;
+    }
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || seen.has(parsed.toString())) {
+        continue;
+      }
+      seen.add(parsed.toString());
+      links.push({ kind, label, provider, url: parsed.toString() });
+    } catch {
+      // Ignore malformed or untrusted source metadata.
+    }
+  }
+  return links;
+}
+
 function normalizeProduct(rawItem: Record<string, unknown>): Product | null {
   const nested = isRecord(rawItem.product) ? rawItem.product : rawItem;
   const id = firstText(nested.id, nested.product_id);
@@ -515,6 +552,7 @@ function normalizeProduct(rawItem: Record<string, unknown>): Product | null {
     recommendationTier: firstText(nested.recommendation_tier) || undefined,
     dataLicense: firstText(nested.data_license) || undefined,
     dataAttributionUrl: firstText(nested.data_attribution_url) || undefined,
+    externalLinks: normalizeExternalLinks(nested.external_links),
     commerce: normalizeCommerce(nested.commerce),
     // V1 purchase URLs are informational legacy fields only. The miniapp opens
     // offers exclusively through the signed same-origin `/r/` route from V2.

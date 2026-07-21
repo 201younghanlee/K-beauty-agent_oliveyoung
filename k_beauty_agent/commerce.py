@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable
 from urllib.parse import quote, urlparse
 
+from .catalog_links import CatalogLink, retailer_links
 from .identity_resolution import normalize_gtin
 from .models import Product
 from .source_adapters.security import require_https_url
@@ -104,95 +105,94 @@ class CommerceService:
                 for product in product_list:
                     products_seen += 1
                     self._upsert_product(connection, product, started_at)
-                    destination_url = product.purchase_url or product.oliveyoung_url
-                    if not destination_url:
-                        continue
-                    try:
-                        domain = _validated_domain(destination_url)
-                    except ValueError:
-                        continue
+                    for link in retailer_links(product):
+                        destination_url = link.url
+                        try:
+                            domain = _validated_domain(destination_url)
+                        except ValueError:
+                            continue
 
-                    retailer_name = product.retailer_name or "Legacy retailer"
-                    retailer_id = self._upsert_retailer(
-                        connection,
-                        display_name=retailer_name,
-                        domain=domain,
-                        now=started_at,
-                    )
-                    variant_id = _variant_id(product.id)
-                    offer_id = _offer_id(product.id, retailer_id, destination_url)
-                    checked_at = _parse_timestamp(
-                        product.price_checked_at or product.oliveyoung_verified_at or product.verified_at
-                    )
-                    stale_after = checked_at + DEFAULT_OFFER_TTL_SECONDS if checked_at else None
-                    previous = connection.execute(
-                        "SELECT price_amount, stock_status, checked_at, destination_url FROM offers WHERE id = ?",
-                        (offer_id,),
-                    ).fetchone()
-                    connection.execute(
-                        """
-                        INSERT INTO offers(
-                            id, variant_id, retailer_id, external_product_id, destination_url,
-                            price_amount, currency, stock_status, checked_at, stale_after,
-                            source_kind, active, metadata_json, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, 'KRW', 'unknown', ?, ?, 'legacy_catalog', 1, ?, ?, ?)
-                        ON CONFLICT(id) DO UPDATE SET
-                            variant_id = excluded.variant_id,
-                            retailer_id = excluded.retailer_id,
-                            external_product_id = excluded.external_product_id,
-                            destination_url = excluded.destination_url,
-                            price_amount = excluded.price_amount,
-                            currency = excluded.currency,
-                            stock_status = excluded.stock_status,
-                            checked_at = excluded.checked_at,
-                            stale_after = excluded.stale_after,
-                            source_kind = excluded.source_kind,
-                            active = 1,
-                            metadata_json = excluded.metadata_json,
-                            updated_at = excluded.updated_at
-                        """,
-                        (
-                            offer_id,
-                            variant_id,
-                            retailer_id,
-                            product.source_product_id,
-                            destination_url,
-                            product.price_krw or product.oliveyoung_price_krw,
-                            checked_at,
-                            stale_after,
-                            json.dumps({"backfilled_from": "Product"}, ensure_ascii=False),
-                            started_at,
-                            started_at,
-                        ),
-                    )
-                    offers_seen += 1
-                    observation = (
-                        product.price_krw or product.oliveyoung_price_krw,
-                        "unknown",
-                        checked_at,
-                        destination_url,
-                    )
-                    prior_observation = (
-                        previous["price_amount"],
-                        previous["stock_status"],
-                        previous["checked_at"],
-                        previous["destination_url"],
-                    ) if previous is not None else None
-                    if prior_observation != observation:
+                        retailer_id = self._upsert_retailer(
+                            connection,
+                            display_name=link.provider,
+                            domain=domain,
+                            now=started_at,
+                        )
+                        variant_id = _variant_id(product.id)
+                        offer_id = _offer_id(product.id, retailer_id, destination_url)
+                        price_amount, checked_at = _legacy_price_evidence(product, link)
+                        stale_after = checked_at + DEFAULT_OFFER_TTL_SECONDS if checked_at else None
+                        previous = connection.execute(
+                            "SELECT price_amount, stock_status, checked_at, destination_url FROM offers WHERE id = ?",
+                            (offer_id,),
+                        ).fetchone()
                         connection.execute(
                             """
-                            INSERT INTO offer_observations(
-                                offer_id, price_amount, currency, stock_status, observed_at, source_payload_json
-                            ) VALUES (?, ?, 'KRW', 'unknown', ?, ?)
+                            INSERT INTO offers(
+                                id, variant_id, retailer_id, external_product_id, destination_url,
+                                price_amount, currency, stock_status, checked_at, stale_after,
+                                source_kind, active, metadata_json, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, 'KRW', 'unknown', ?, ?, 'legacy_catalog', 1, ?, ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                variant_id = excluded.variant_id,
+                                retailer_id = excluded.retailer_id,
+                                external_product_id = excluded.external_product_id,
+                                destination_url = excluded.destination_url,
+                                price_amount = excluded.price_amount,
+                                currency = excluded.currency,
+                                stock_status = excluded.stock_status,
+                                checked_at = excluded.checked_at,
+                                stale_after = excluded.stale_after,
+                                source_kind = excluded.source_kind,
+                                active = 1,
+                                metadata_json = excluded.metadata_json,
+                                updated_at = excluded.updated_at
                             """,
                             (
                                 offer_id,
-                                product.price_krw or product.oliveyoung_price_krw,
-                                checked_at or started_at,
-                                json.dumps({"backfilled": True}),
+                                variant_id,
+                                retailer_id,
+                                product.source_product_id,
+                                destination_url,
+                                price_amount,
+                                checked_at,
+                                stale_after,
+                                json.dumps(
+                                    {
+                                        "backfilled_from": "Product",
+                                        "catalog_link_source": link.source_field,
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                                started_at,
+                                started_at,
                             ),
                         )
-                        observations_written += 1
+                        offers_seen += 1
+                        observation = (price_amount, "unknown", checked_at, destination_url)
+                        prior_observation = (
+                            previous["price_amount"],
+                            previous["stock_status"],
+                            previous["checked_at"],
+                            previous["destination_url"],
+                        ) if previous is not None else None
+                        if prior_observation != observation:
+                            connection.execute(
+                                """
+                                INSERT INTO offer_observations(
+                                    offer_id, price_amount, currency, stock_status, observed_at, source_payload_json
+                                ) VALUES (?, ?, 'KRW', 'unknown', ?, ?)
+                                """,
+                                (
+                                    offer_id,
+                                    price_amount,
+                                    checked_at or started_at,
+                                    json.dumps(
+                                        {"backfilled": True, "catalog_link_source": link.source_field}
+                                    ),
+                                ),
+                            )
+                            observations_written += 1
 
                 connection.execute(
                     """
@@ -1237,6 +1237,25 @@ def disclosure_metadata(required: bool) -> dict[str, Any]:
         "ranking_policy_ko": RANKING_POLICY_KO,
         "ranking_policy_en": RANKING_POLICY_EN,
     }
+
+
+def _legacy_price_evidence(product: Product, link: CatalogLink) -> tuple[int | None, int | None]:
+    """Attach a catalog price only to its explicitly configured purchase link.
+
+    A retailer URL found in an official/review/source field proves that the
+    product page exists; it does not prove that an old KRW snapshot belongs to
+    that retailer. Those additional destinations therefore stay link-only.
+    """
+
+    if link.source_field not in {"purchase_url", "oliveyoung_url"}:
+        return None, None
+    price_amount = product.price_krw
+    if price_amount is None:
+        price_amount = product.oliveyoung_price_krw
+    checked_at = _parse_timestamp(
+        product.price_checked_at or product.oliveyoung_verified_at or product.verified_at
+    )
+    return price_amount, checked_at
 
 
 _OFFERS_FOR_PRODUCT_SQL = """

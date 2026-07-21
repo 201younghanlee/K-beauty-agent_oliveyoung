@@ -53,6 +53,26 @@ describe('normalizeResponse', () => {
             ingredient_status: 'complete',
             recommendation_tier: 'eligible',
             data_license: 'ODbL-1.0',
+            external_links: [
+              {
+                kind: 'brand_official',
+                label: 'Example 공식 제품 정보',
+                provider: 'Example',
+                url: 'https://brand.example.com/barrier-toner',
+              },
+              {
+                kind: 'retailer',
+                label: 'Unsafe retailer field',
+                provider: 'Store',
+                url: 'https://shop.example.com/barrier-toner',
+              },
+              {
+                kind: 'ingredient_reference',
+                label: 'Insecure source',
+                provider: 'Source',
+                url: 'http://source.example.com/barrier-toner',
+              },
+            ],
             ingredients: ['Panthenol'],
           },
         },
@@ -69,6 +89,12 @@ describe('normalizeResponse', () => {
     expect(result.items[0].product.retailerName).toBe('Example Shop');
     expect(result.items[0].product.catalogSource).toBe('open_beauty_facts');
     expect(result.items[0].product.sourceUpdatedAt).toBe('2026-07-19');
+    expect(result.items[0].product.externalLinks).toEqual([{
+      kind: 'brand_official',
+      label: 'Example 공식 제품 정보',
+      provider: 'Example',
+      url: 'https://brand.example.com/barrier-toner',
+    }]);
     expect(result.items[0].product.offers).toEqual([]);
     expect(result.catalogTotal).toBe(4_250);
     expect(result.rankingPolicy).toBe('추천 순위는 적합도와 데이터 신선도로 정하며 제휴 수수료는 반영하지 않아요.');

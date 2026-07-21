@@ -43,6 +43,13 @@ export interface CommerceSummary {
   hasAffiliateOffers: boolean;
 }
 
+export interface ProductExternalLink {
+  kind: 'brand_official' | 'ingredient_reference' | 'data_reference';
+  label: string;
+  provider: string;
+  url: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -67,6 +74,7 @@ export interface Product {
   recommendationTier?: string;
   dataLicense?: string;
   dataAttributionUrl?: string;
+  externalLinks?: ProductExternalLink[];
   commerce?: CommerceSummary;
   offers: RetailOffer[];
 }

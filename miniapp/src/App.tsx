@@ -7,7 +7,14 @@ import {
   requestRecommendations,
 } from './api';
 import { openExternalUrl } from './external';
-import type { Product, RecommendationItem, RecommendationResult, RetailOffer, SurveyAnswers } from './types';
+import type {
+  Product,
+  ProductExternalLink,
+  RecommendationItem,
+  RecommendationResult,
+  RetailOffer,
+  SurveyAnswers,
+} from './types';
 import { useSafeAreaInsets } from './useSafeArea';
 
 const LEGACY_SAVED_STORAGE_KEY = 'kBeautyAgentSavedProductsV1';
@@ -99,6 +106,43 @@ function isOptionalNumber(value: unknown): boolean {
   return value === undefined || (typeof value === 'number' && Number.isFinite(value));
 }
 
+function isSavedExternalLinks(value: unknown): value is ProductExternalLink[] | undefined {
+  if (value === undefined) {
+    return true;
+  }
+  if (!Array.isArray(value) || value.length > 8) {
+    return false;
+  }
+  const allowedKinds = new Set<ProductExternalLink['kind']>([
+    'brand_official',
+    'ingredient_reference',
+    'data_reference',
+  ]);
+  return value.every((link) => {
+    if (!isRecord(link)
+      || !allowedKinds.has(link.kind as ProductExternalLink['kind'])
+      || typeof link.label !== 'string'
+      || !link.label
+      || link.label.length > 120
+      || typeof link.provider !== 'string'
+      || !link.provider
+      || link.provider.length > 80
+      || typeof link.url !== 'string'
+      || link.url.length > 2_048) {
+      return false;
+    }
+    try {
+      const parsed = new URL(link.url);
+      return parsed.protocol === 'https:'
+        && !parsed.username
+        && !parsed.password
+        && parsed.toString() === link.url;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function isSavedRecommendationItem(value: unknown): value is RecommendationItem {
   if (!isRecord(value) || !isRecord(value.product)) {
     return false;
@@ -124,6 +168,7 @@ function isSavedRecommendationItem(value: unknown): value is RecommendationItem 
     isOptionalString(product.recommendationTier) &&
     isOptionalString(product.dataLicense) &&
     isOptionalString(product.dataAttributionUrl) &&
+    isSavedExternalLinks(product.externalLinks) &&
     isOptionalNumber(product.priceKrw) &&
     isOptionalNumber(product.rating) &&
     isOptionalNumber(product.reviewCount) &&
@@ -279,7 +324,7 @@ function sourceLabel(item: RecommendationItem): string {
 }
 
 function sourceDate(item: RecommendationItem): string {
-  const value = item.product.sourceUpdatedAt || item.product.priceCheckedAt;
+  const value = item.product.sourceUpdatedAt;
   const date = value?.match(/\d{4}-\d{2}-\d{2}/)?.[0];
   return date ? date.replace(/-/g, '.') : '';
 }
@@ -428,9 +473,20 @@ function ProductCard({
   const [imageFailed, setImageFailed] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageUrl = imageFailed ? undefined : product.imageUrl;
-  const attributionUrl = sourceAttributionUrl(product);
+  const fallbackAttributionUrl = sourceAttributionUrl(product);
+  const informationLinks = product.externalLinks?.length
+    ? product.externalLinks
+    : fallbackAttributionUrl
+      ? [{
+          kind: 'data_reference' as const,
+          label: '상품 정보 출처',
+          provider: 'Open Beauty Facts',
+          url: fallbackAttributionUrl,
+        }]
+      : [];
+  const primaryInformationUrl = informationLinks[0]?.url;
   const canCompareRetailers = summary.retailerCount > 0 || product.catalogSource === 'curated';
-  const canOpenInformation = !canCompareRetailers && Boolean(attributionUrl);
+  const canOpenInformation = !canCompareRetailers && Boolean(primaryInformationUrl);
 
   return (
     <article className={`product-card ${compact ? 'product-card--compact' : ''}`}>
@@ -487,15 +543,19 @@ function ProductCard({
           </p>
         )}
 
-        <p className="source-row">
+        <div className="source-row">
           <span>{sourceLabel(item)}</span>
           {sourceDate(item) && <span>정보 기준 {sourceDate(item)}</span>}
-          {attributionUrl && (
-            <button type="button" onClick={() => onOpenInformation(attributionUrl)}>
-              상품 정보 출처
+          {informationLinks.map((link) => (
+            <button
+              type="button"
+              key={`${link.kind}:${link.url}`}
+              onClick={() => onOpenInformation(link.url)}
+            >
+              {link.label}
             </button>
-          )}
-        </p>
+          ))}
+        </div>
 
         {!compact && (
           <>
@@ -532,8 +592,8 @@ function ProductCard({
           onClick={() => {
             if (canCompareRetailers) {
               onCompareOffers(item);
-            } else if (attributionUrl) {
-              onOpenInformation(attributionUrl);
+            } else if (primaryInformationUrl) {
+              onOpenInformation(primaryInformationUrl);
             }
           }}
         >

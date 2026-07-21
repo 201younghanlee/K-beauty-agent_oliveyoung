@@ -30,8 +30,8 @@ def _product(product_id: str = "example-serum", *, name: str = "Example Serum") 
         ingredients=("Glycerin", "Panthenol"),
         suited_skin_types=("dry",),
         concerns=("hydration",),
-        purchase_url=f"https://shop.example.com/products/{product_id}",
-        retailer_name="Example Shop",
+        purchase_url=f"https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo={product_id}",
+        retailer_name="Olive Young",
         price_krw=19_000,
         price_checked_at="2026-07-20T00:00:00Z",
     )
@@ -80,6 +80,56 @@ def test_commerce_schema_and_legacy_backfill_are_idempotent(tmp_path: Path) -> N
     assert second == {"products_seen": 1, "offers_seen": 1, "observations_written": 0}
 
 
+def test_legacy_catalog_adds_verified_retailers_without_reusing_oliveyoung_price(
+    tmp_path: Path,
+) -> None:
+    product = Product(
+        id="etude-soonjung",
+        name="SoonJung 2x Barrier Intensive Cream",
+        brand="ETUDE",
+        category="moisturizer",
+        country="Korea",
+        ingredients=("Panthenol",),
+        purchase_url="https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query=soonjung",
+        retailer_name="Olive Young",
+        oliveyoung_url="https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query=soonjung",
+        price_krw=23_000,
+        price_checked_at="2026-07-20T00:00:00Z",
+        source_url="https://www.ulta.com/p/soonjung-2x-barrier-intensive-cream-pimprod2049666",
+        official_url="https://www.etude.com/int/en/index.php/soonjung-2x-barrier-intensive-cream.html",
+        ingredient_source_url="https://incidecoder.com/products/etude-house-soon-jung",
+    )
+    store, service = _service(tmp_path, [product])
+
+    second = service.sync_legacy_catalog([product])
+    bundle = service.offers_for_product(product.id)
+
+    assert bundle["summary"]["offer_count"] == 2
+    assert bundle["summary"]["retailer_count"] == 2
+    assert {offer["retailer"]["name"] for offer in bundle["offers"]} == {
+        "Olive Young",
+        "Ulta Beauty",
+    }
+    assert all(offer["link_only"] is True for offer in bundle["offers"])
+    assert all(offer["redirect_url"].startswith("/r/") for offer in bundle["offers"])
+    with store.connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT r.display_name, o.destination_url, o.price_amount, o.checked_at
+            FROM offers o JOIN retailers r ON r.id = o.retailer_id
+            ORDER BY r.display_name
+            """
+        ).fetchall()
+    by_retailer = {row["display_name"]: dict(row) for row in rows}
+    assert by_retailer["Olive Young"]["price_amount"] == 23_000
+    assert by_retailer["Olive Young"]["checked_at"] is not None
+    assert by_retailer["Ulta Beauty"]["price_amount"] is None
+    assert by_retailer["Ulta Beauty"]["checked_at"] is None
+    assert all("incidecoder.com" not in row["destination_url"] for row in rows)
+    assert all("etude.com" not in row["destination_url"] for row in rows)
+    assert second == {"products_seen": 1, "offers_seen": 2, "observations_written": 0}
+
+
 def test_open_beauty_facts_gtin_is_seeded_for_first_retailer_match(tmp_path: Path) -> None:
     obf_product = replace(
         _product(),
@@ -114,7 +164,7 @@ def test_stale_offer_hides_price_and_stock_but_keeps_checked_time(tmp_path: Path
     assert offer["redirect_url"].startswith("/r/")
     token = offer["redirect_url"].removeprefix("/r/")
     assert service.resolve_redirect_token(token, now=1_784_676_000).url == (
-        "https://shop.example.com/products/example-serum"
+        "https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=example-serum"
     )
     assert bundle["summary"]["best_current_price"] is None
 
@@ -204,7 +254,7 @@ def test_mixed_currency_offers_use_only_krw_for_krw_lowest_price(tmp_path: Path)
     assert bundle["summary"]["best_current_price"] == {
         "amount": 19_000,
         "currency": "KRW",
-        "retailer_name": "Example Shop",
+        "retailer_name": "Olive Young",
     }
     assert summary["lowest_fresh_price_krw"] == 19_000
     assert summary["best_current_price"]["currency"] == "KRW"
@@ -216,7 +266,9 @@ def test_signed_redirect_rejects_tampering_expiry_and_non_allowlisted_target(tmp
     token = service.create_redirect_token(offer_id, now=100, ttl_seconds=60)
 
     target = service.resolve_redirect_token(token, now=120)
-    assert target.url == "https://shop.example.com/products/example-serum"
+    assert target.url == (
+        "https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=example-serum"
+    )
     tampered = f"{token[:-1]}{'A' if token[-1] != 'A' else 'B'}"
     with pytest.raises(RedirectTokenError):
         service.resolve_redirect_token(tampered, now=120)
@@ -257,7 +309,9 @@ def test_redirect_endpoint_logs_only_hashed_session_and_never_redirects_from_raw
 
     assert response.status_code == 302
     assert repeated.status_code == 302
-    assert response.headers["location"] == "https://shop.example.com/products/example-serum"
+    assert response.headers["location"] == (
+        "https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=example-serum"
+    )
     assert response.headers["cache-control"] == "no-store"
     with store.connect() as connection:
         row = connection.execute("SELECT * FROM affiliate_clicks").fetchone()

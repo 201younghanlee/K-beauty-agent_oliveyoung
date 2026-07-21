@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from .catalog_links import information_links
 from .knowledge_base import normalize_token
 from .knowledge_base import find_evidence_for_ingredient
 from .localization import (
@@ -92,6 +93,7 @@ def product_to_dict(product: Product) -> dict[str, Any]:
         "recommendation_tier": product.recommendation_tier,
         "data_license": product.data_license,
         "data_attribution_url": product.data_attribution_url,
+        "external_links": [link.to_public_dict() for link in information_links(product)],
         "ingredient_explanations": ingredient_explanations(product.ingredients),
     }
 
