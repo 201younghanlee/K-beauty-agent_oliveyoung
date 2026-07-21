@@ -104,6 +104,8 @@ class IngredientHybridRecommender:
             "budget_preference" in profile.sensitivities
             and profile.min_price_krw is None
             and profile.min_price_usd is None
+            and profile.max_price_krw is None
+            and profile.max_price_usd is None
         ):
             if product.price_krw is not None:
                 budget_score = max(0.0, min(1.0, (40000.0 - product.price_krw) / 40000.0))
@@ -119,7 +121,7 @@ class IngredientHybridRecommender:
                     item.reasons.append("lower listed price fits the budget follow-up")
         if profile.max_price_krw is not None:
             if product.price_krw is None:
-                self._add(item, "penalties", -100.0)
+                self._add(item, "penalties", -1.0)
                 item.missing_data.append("price")
                 item.cautions.append(f"checked price is missing, so cannot verify under ₩{profile.max_price_krw:,}")
             elif product.price_krw <= profile.max_price_krw:
@@ -130,7 +132,7 @@ class IngredientHybridRecommender:
                 item.cautions.append(f"excluded because checked price exceeds requested maximum: ₩{profile.max_price_krw:,}")
         if profile.min_price_krw is not None:
             if product.price_krw is None:
-                self._add(item, "penalties", -100.0)
+                self._add(item, "penalties", -1.0)
                 item.missing_data.append("price")
                 item.cautions.append(f"checked price is missing, so cannot verify over ₩{profile.min_price_krw:,}")
             elif product.price_krw >= profile.min_price_krw:
@@ -141,7 +143,7 @@ class IngredientHybridRecommender:
                 item.cautions.append(f"excluded because checked price is below requested minimum: ₩{profile.min_price_krw:,}")
         if profile.max_price_usd is not None:
             if product.price_usd is None:
-                self._add(item, "penalties", -100.0)
+                self._add(item, "penalties", -1.0)
                 item.missing_data.append("price")
                 item.cautions.append(f"price is missing, so cannot verify under ${profile.max_price_usd:.2f}")
             elif product.price_usd <= profile.max_price_usd:
@@ -152,7 +154,7 @@ class IngredientHybridRecommender:
                 item.cautions.append(f"excluded because listed price exceeds requested maximum: ${profile.max_price_usd:.2f}")
         if profile.min_price_usd is not None:
             if product.price_usd is None:
-                self._add(item, "penalties", -100.0)
+                self._add(item, "penalties", -1.0)
                 item.missing_data.append("price")
                 item.cautions.append(f"price is missing, so cannot verify over ${profile.min_price_usd:.2f}")
             elif product.price_usd >= profile.min_price_usd:

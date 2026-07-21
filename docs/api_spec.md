@@ -1,6 +1,6 @@
-# API Spec
+# API Spec: compatibility API and commerce v2
 
-The public API uses the checked-in multi-source catalog by default. The current snapshot combines verified curated records with quality-filtered Open Beauty Facts records. Price and stock are not live catalog fields. Counts change with reviewed catalog refreshes, so the abbreviated examples below intentionally omit volatile numeric totals; query the live endpoints for current values.
+The public API uses the checked-in multi-source catalog by default. The current snapshot combines verified curated records with quality-filtered Open Beauty Facts records. The `/api/*` routes below are the v1 compatibility surface; new clients should use `/api/v2/recommend`, `/api/v2/follow-up`, `/api/v2/products`, `/api/v2/products/{id}/offers`, and `/api/v2/catalog/status`. Price and stock are commerce-offer fields, not Open Beauty Facts catalog fields. Counts change with reviewed catalog refreshes, so the abbreviated examples below intentionally omit volatile numeric totals; query the deployed endpoints for current values.
 
 ## GET `/health`
 
@@ -89,6 +89,8 @@ Returns personalized skincare recommendations from the current multi-source cata
   "limit": 3,
   "use_openai": false,
   "language": "en",
+  "privacy_consent": true,
+  "privacy_policy_version": "2026-07-20",
   "profile": {
     "skin_type": "oily",
     "concerns": ["oil_control"],
@@ -102,13 +104,14 @@ Returns personalized skincare recommendations from the current multi-source cata
 
 ### Fields
 
-- `query`: Required natural-language request, maximum 1,200 characters.
+- `query`: Required request text, maximum 1,200 characters. The server rejects known health-condition, allergy, pregnancy, and nursing text; it never persists this raw value. Only a controlled profile summary is saved.
 - `limit`: Number of products to return, from 1 to 8.
 - `use_openai`: Requests an optional grounded explanation. Render keeps the public LLM disabled by default.
 - `language`: `en` or `ko`.
 - `profile`: Optional structured quiz values. `skin_type` and at least one `desired_categories` item are required when this object is present.
-- `profile.avoid_ingredients`: Up to 12 explicit ingredient exclusions. Community-reported catalog rows are not considered when this list is present.
-- `profile.max_price_krw`: Uses only products with a checked price; products without one are excluded from a budget-constrained result.
+- `profile.avoid_ingredients`: Up to 12 inputs, reduced to supported canonical cosmetic ingredient names. Community-reported catalog rows are not considered when a supported exclusion is present.
+- `profile.max_price_krw`: Uses only fresh KRW commerce prices for the budget comparison. Products without a fresh price receive a missing-price warning and penalty but can remain when otherwise suitable.
+- `privacy_consent`: `true` stores the controlled profile, result, and selections for the anonymous session for up to 30 days. With `false`, recommendation is stateless and `recommendation_id` is `null`.
 
 ### Response Body
 
@@ -116,7 +119,7 @@ Returns personalized skincare recommendations from the current multi-source cata
 {
   "recommendation_id": 42,
   "decision": "recommend",
-  "query": "지성 피부용 산뜻한 선크림을 추천해줘",
+  "query": "{\"controlled_profile\":{\"concerns\":[\"oil_control\"],\"desired_categories\":[\"sunscreen\"]}}",
   "results": [
     {
       "score": 7.3,
@@ -145,12 +148,30 @@ Returns personalized skincare recommendations from the current multi-source cata
 
 ## POST `/api/follow-up`
 
-Uses the same request and response shape as `/api/recommend`, while merging the new request with the anonymous session's stored profile.
+Uses the same request and response shape as `/api/recommend`, while merging
+controlled fields with the anonymous session's stored profile. It requires
+`privacy_consent: true` and the same cookie or `X-KBeauty-Session` header used
+for the original recommendation. Free text is not retained or sent to the
+LLM. Follow-up constraints are parsed locally into the same controlled fields.
 
 ## Selection endpoints
 
-- `GET /api/selections` returns saved and compare lists with current product metadata.
-- `POST /api/selections` accepts `product_id`, `list_type` (`saved` or `compare`), and `selected`.
-- Saved-list totals sum only checked `price_krw` values and return `missing_price_ids` separately.
+- `GET /api/selections` returns saved and compare lists with current product metadata and requires a consented anonymous session.
+- `POST /api/selections` accepts `product_id`, `list_type` (`saved` or `compare`), and `selected`; it requires the same consented session.
+- Saved-list totals sum only fresh KRW commerce offers and return `missing_price_ids` separately.
+
+## Commerce v2 offer contract
+
+- `GET /api/v2/products/{product_id}/offers` returns retailer offers, freshness,
+  stock, affiliate disclosure, and an expiring relative `redirect_url`.
+- Stale price/stock feed offers hide price and stock and return
+  `redirect_url: null`; explicitly link-only offers retain an operator-approved,
+  allowlisted destination while price and stock stay hidden.
+- Clients must open only the returned relative redirect and must not construct a
+  retailer URL. The redirect rechecks activity, exact destination-domain
+  allowlisting, target fingerprint, token expiry, and either offer freshness or
+  the explicit link-only source policy.
+- `GET /api/v2/catalog/status` exposes public product/variant/retailer/offer and
+  freshness counts without click, conversion, program, or ingestion-error data.
 
 The compact reference API under `app/` has a separate `/api/compare` endpoint and legacy request shape. It is retained for portfolio examples but is not the Render production entry point.

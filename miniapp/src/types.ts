@@ -10,6 +10,44 @@ export interface SurveyAnswers {
   budget: number | null;
   avoidIngredients: string[];
   avoidIngredientsText: string;
+  privacyConsent: boolean;
+}
+
+export type OfferAvailability = 'in_stock' | 'preorder' | 'out_of_stock' | 'unknown';
+
+export interface RetailOffer {
+  id: string;
+  retailerId?: string;
+  retailerName: string;
+  priceAmount?: number;
+  listPriceAmount?: number;
+  priceKrw?: number;
+  listPriceKrw?: number;
+  currency: string;
+  availability: OfferAvailability;
+  isStale: boolean;
+  checkedAt?: string;
+  clickUrl?: string;
+  isLinkOnly: boolean;
+  isAffiliate: boolean;
+  affiliateLabel?: string;
+  affiliateDisclosure?: string;
+}
+
+export interface CommerceSummary {
+  retailerCount: number;
+  offerCount: number;
+  freshOfferCount: number;
+  lowestFreshPriceKrw?: number;
+  lowestFreshPriceCurrency?: string;
+  hasAffiliateOffers: boolean;
+}
+
+export interface ProductExternalLink {
+  kind: 'brand_official' | 'ingredient_reference' | 'data_reference';
+  label: string;
+  provider: string;
+  url: string;
 }
 
 export interface Product {
@@ -36,6 +74,9 @@ export interface Product {
   recommendationTier?: string;
   dataLicense?: string;
   dataAttributionUrl?: string;
+  externalLinks?: ProductExternalLink[];
+  commerce?: CommerceSummary;
+  offers: RetailOffer[];
 }
 
 export interface RecommendationItem {
@@ -51,6 +92,7 @@ export interface RecommendationResult {
   summary: string;
   items: RecommendationItem[];
   catalogTotal?: number;
+  rankingPolicy?: string;
 }
 
 export interface ApiErrorBody {

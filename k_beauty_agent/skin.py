@@ -19,7 +19,7 @@ CONCERN_TERMS = {
     "clogged_pores": ("blackhead", "whitehead", "clogged", "블랙헤드", "화이트헤드", "모공"),
     "hydration": ("hydration", "dehydrated", "수분", "보습", "속건조"),
     "barrier_support": ("barrier", "장벽", "손상", "진정"),
-    "redness": ("redness", "rosacea", "홍조", "붉", "진정"),
+    "redness": ("redness", "홍조", "붉", "진정"),
     "hyperpigmentation": ("dark spot", "melasma", "pigmentation", "잡티", "색소", "기미"),
     "anti_aging": ("wrinkle", "fine line", "aging", "탄력", "주름", "안티에이징"),
     "texture": ("texture", "rough", "결", "요철"),
@@ -29,7 +29,7 @@ CATEGORY_TERMS = {
     "cleanser": ("cleanser", "cleansing", "foam", "oil cleanser", "balm", "폼", "클렌저", "클렌징", "세안", "클렌징오일", "클렌징 오일", "클렌징밤", "클렌징 밤"),
     "toner": ("toner", "toner pad", "mist", "토너", "스킨", "패드", "토너패드", "토너 패드", "미스트"),
     "serum": ("serum", "ampoule", "essence", "세럼", "앰플", "에센스"),
-    "moisturizer": ("lotion", "emulsion", "moisturizer", "water cream", "cream", "수분크림", "수분 크림", "보습크림", "보습 크림", "크림", "에멀전", "로션", "보습제", "아이크림", "아이 크림"),
+    "moisturizer": ("lotion", "emulsion", "moisturizer", "water cream", "cream", "수분크림", "수분 크림", "보습크림", "보습 크림", "크림", "에멀전", "로션", "보습제"),
     "sunscreen": ("sunscreen", "spf", "sun cream", "선크림", "자외선"),
     "basic": ("basic", "routine", "기초", "스킨케어", "루틴"),
 }
@@ -37,8 +37,6 @@ CATEGORY_TERMS = {
 SENSITIVITY_TERMS = {
     "fragrance_sensitive": ("fragrance", "perfume", "향료", "무향", "향에 민감"),
     "alcohol_sensitive": ("alcohol", "알코올"),
-    "salicylate_allergy": ("aspirin allergy", "salicylate", "아스피린 알레르기"),
-    "snail_allergy": ("snail allergy", "mollusk allergy", "snail", "달팽이 알레르기"),
 }
 
 GENTLE_TERMS = (
@@ -153,12 +151,6 @@ def analyze_skin_query(query: str) -> SkinProfile:
             profile.sensitivities.append(sensitivity)
             if sensitivity == "fragrance_sensitive":
                 profile.avoid_ingredients.extend(["fragrance", "parfum", "essential oil"])
-            if sensitivity == "salicylate_allergy":
-                profile.allergies.append("salicylate")
-                profile.avoid_ingredients.extend(["salicylic acid", "bha"])
-            if sensitivity == "snail_allergy":
-                profile.allergies.append("snail_allergy")
-                profile.avoid_ingredients.extend(["snail", "snail secretion filtrate"])
 
     if _contains_any(text, GENTLE_TERMS):
         profile.concerns.extend(["barrier_support", "redness"])
@@ -186,10 +178,6 @@ def analyze_skin_query(query: str) -> SkinProfile:
     ) and "budget_preference" not in profile.sensitivities:
         profile.sensitivities.append("budget_preference")
 
-    if _contains_any(text, ("pregnant", "pregnancy", "nursing", "임신", "수유")):
-        profile.pregnant_or_nursing = True
-        profile.avoid_ingredients.extend(["retinol", "retinal", "retinoid"])
-
     _infer_default_concerns(profile)
 
     explicit_avoids = re.findall(r"\b(?:avoid|without|no)\b\s+([a-zA-Z가-힣 ]{2,30})", query)
@@ -198,7 +186,7 @@ def analyze_skin_query(query: str) -> SkinProfile:
     for item in explicit_avoids:
         cleaned = item.strip(" .,!?:;")
         if cleaned:
-            profile.avoid_ingredients.extend(_canonical_ingredients(cleaned) or [cleaned])
+            profile.avoid_ingredients.extend(_canonical_ingredients(cleaned))
 
     _dedupe(profile.concerns)
     _dedupe(profile.desired_categories)
@@ -214,7 +202,7 @@ def analyze_skin_query(query: str) -> SkinProfile:
         profile.uncertainty.append("concerns")
         profile.follow_up_questions.append("What are your top concerns: oil control, acne, hydration, redness, pigmentation, or aging?")
     if "sensitive" in (profile.skin_type or "") and not profile.avoid_ingredients:
-        profile.follow_up_questions.append("Do you react to fragrance, essential oils, alcohol, acids, or retinoids?")
+        profile.follow_up_questions.append("Are there any cosmetic ingredient names you prefer to avoid?")
 
     return profile
 
@@ -245,8 +233,6 @@ def _category_matches(text: str, category: str, terms: tuple[str, ...]) -> bool:
         "에멀전",
         "로션",
         "보습제",
-        "아이크림",
-        "아이 크림",
     )
     return _contains_any(text, specific_moisturizer_terms)
 
@@ -287,6 +273,16 @@ def _canonical_ingredients(text: str) -> list[str]:
         if any(normalize_token(term) in normalized for term in terms):
             found.append(ingredient)
     return found
+
+
+def canonicalize_ingredient_preferences(values: list[str]) -> list[str]:
+    """Keep only supported ingredient names so free text cannot enter saved profiles."""
+
+    canonical: list[str] = []
+    for value in values:
+        canonical.extend(_canonical_ingredients(str(value)))
+    _dedupe(canonical)
+    return canonical
 
 
 def _extract_max_price_usd(text: str) -> float | None:

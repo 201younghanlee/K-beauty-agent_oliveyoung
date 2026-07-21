@@ -253,7 +253,10 @@ class LiveProductDatabaseTest(unittest.TestCase):
         self.assertIn("function reviewExcerpts(product", app_js)
         self.assertIn("positive_reviews", app_js)
         self.assertIn("negative_reviews", app_js)
-        self.assertIn("20260624-render-api-v2", index_html)
+        self.assertIn("20260720-commerce-v2", index_html)
+        self.assertIn('id="offerModal"', index_html)
+        self.assertIn('/api/v2/products/${encodeURIComponent(productId)}/offers', app_js)
+        self.assertIn("offer.clickUrl", app_js)
 
     def test_oliveyoung_snapshot_csv_is_first_live_source_and_uses_krw_budget(self) -> None:
         snapshot_csv = Path(self.tempdir.name) / "oliveyoung_snapshot.csv"

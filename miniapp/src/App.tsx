@@ -1,14 +1,33 @@
 import { graniteEvent } from '@apps-in-toss/web-framework';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
-import { requestRecommendations } from './api';
-import { oliveYoungSearchUrl, openExternalUrl } from './external';
-import type { RecommendationItem, RecommendationResult, SurveyAnswers } from './types';
+import {
+  deleteAnonymousSessionData,
+  privacyPolicyUrl,
+  requestProductOffers,
+  requestRecommendations,
+} from './api';
+import { openExternalUrl } from './external';
+import type {
+  Product,
+  ProductExternalLink,
+  RecommendationItem,
+  RecommendationResult,
+  RetailOffer,
+  SurveyAnswers,
+} from './types';
 import { useSafeAreaInsets } from './useSafeArea';
 
-const SAVED_STORAGE_KEY = 'kBeautyAgentSavedProductsV1';
+const LEGACY_SAVED_STORAGE_KEY = 'kBeautyAgentSavedProductsV1';
+const SAVED_IDS_STORAGE_KEY = 'kBeautyAgentSavedProductIdsV2';
+const SAVED_CACHE_STORAGE_KEY = 'kBeautyAgentSavedProductCacheV2';
+const SAVED_ISSUED_AT_KEY = 'kBeautyAgentSavedProductIssuedAtV2';
+const SAVED_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const VALIDATION_MESSAGE_ID = 'survey-validation-message';
 const SKIN_QUESTION_TITLE_ID = 'skin-question-title';
 const CATEGORY_QUESTION_TITLE_ID = 'category-question-title';
+const OBF_DATA_LICENSE_URL = 'https://opendatacommons.org/licenses/odbl/1-0/';
+const OBF_IMAGE_LICENSE_URL = 'https://creativecommons.org/licenses/by-sa/3.0/';
+const OBF_DATA_URL = 'https://world.openbeautyfacts.org/data';
 
 const SKIN_OPTIONS = [
   { value: 'oily', label: '지성' },
@@ -66,6 +85,7 @@ const INITIAL_ANSWERS: SurveyAnswers = {
   budget: null,
   avoidIngredients: [],
   avoidIngredientsText: '',
+  privacyConsent: false,
 };
 
 type Screen = 'survey' | 'results' | 'saved';
@@ -84,6 +104,43 @@ function isOptionalString(value: unknown): boolean {
 
 function isOptionalNumber(value: unknown): boolean {
   return value === undefined || (typeof value === 'number' && Number.isFinite(value));
+}
+
+function isSavedExternalLinks(value: unknown): value is ProductExternalLink[] | undefined {
+  if (value === undefined) {
+    return true;
+  }
+  if (!Array.isArray(value) || value.length > 8) {
+    return false;
+  }
+  const allowedKinds = new Set<ProductExternalLink['kind']>([
+    'brand_official',
+    'ingredient_reference',
+    'data_reference',
+  ]);
+  return value.every((link) => {
+    if (!isRecord(link)
+      || !allowedKinds.has(link.kind as ProductExternalLink['kind'])
+      || typeof link.label !== 'string'
+      || !link.label
+      || link.label.length > 120
+      || typeof link.provider !== 'string'
+      || !link.provider
+      || link.provider.length > 80
+      || typeof link.url !== 'string'
+      || link.url.length > 2_048) {
+      return false;
+    }
+    try {
+      const parsed = new URL(link.url);
+      return parsed.protocol === 'https:'
+        && !parsed.username
+        && !parsed.password
+        && parsed.toString() === link.url;
+    } catch {
+      return false;
+    }
+  });
 }
 
 function isSavedRecommendationItem(value: unknown): value is RecommendationItem {
@@ -111,11 +168,13 @@ function isSavedRecommendationItem(value: unknown): value is RecommendationItem 
     isOptionalString(product.recommendationTier) &&
     isOptionalString(product.dataLicense) &&
     isOptionalString(product.dataAttributionUrl) &&
+    isSavedExternalLinks(product.externalLinks) &&
     isOptionalNumber(product.priceKrw) &&
     isOptionalNumber(product.rating) &&
     isOptionalNumber(product.reviewCount) &&
     isOptionalString(product.reviewSummary) &&
     isStringArray(product.ingredients) &&
+    (product.offers === undefined || Array.isArray(product.offers)) &&
     typeof value.reason === 'string' &&
     isOptionalNumber(value.score) &&
     isStringArray(value.cautions) &&
@@ -123,9 +182,25 @@ function isSavedRecommendationItem(value: unknown): value is RecommendationItem 
   );
 }
 
-function readSavedItems(): RecommendationItem[] {
+function withoutDynamicOfferData(item: RecommendationItem): RecommendationItem {
+  return {
+    ...item,
+    product: {
+      ...item.product,
+      oliveyoungUrl: undefined,
+      purchaseUrl: undefined,
+      retailerName: undefined,
+      priceKrw: undefined,
+      priceCheckedAt: undefined,
+      commerce: undefined,
+      offers: [],
+    },
+  };
+}
+
+function readLegacySavedItems(): RecommendationItem[] {
   try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(SAVED_STORAGE_KEY) || '[]');
+    const value: unknown = JSON.parse(window.localStorage.getItem(LEGACY_SAVED_STORAGE_KEY) || '[]');
     if (!Array.isArray(value)) {
       return [];
     }
@@ -135,6 +210,7 @@ function readSavedItems(): RecommendationItem[] {
       if (!isSavedRecommendationItem(item) || seenIds.has(item.product.id)) {
         return false;
       }
+      item.product.offers ??= [];
       seenIds.add(item.product.id);
       return true;
     });
@@ -143,8 +219,97 @@ function readSavedItems(): RecommendationItem[] {
   }
 }
 
-function formatPrice(price?: number): string {
-  return price ? `${new Intl.NumberFormat('ko-KR').format(price)}원` : '판매가 미제공';
+function readSavedState(): { ids: string[]; cache: Record<string, RecommendationItem> } {
+  try {
+    const hasStoredData = [LEGACY_SAVED_STORAGE_KEY, SAVED_IDS_STORAGE_KEY, SAVED_CACHE_STORAGE_KEY]
+      .some((key) => window.localStorage.getItem(key) !== null);
+    const issuedAt = Number(window.localStorage.getItem(SAVED_ISSUED_AT_KEY));
+    const isExpired = !Number.isFinite(issuedAt)
+      || issuedAt <= 0
+      || issuedAt > Date.now()
+      || Date.now() - issuedAt > SAVED_MAX_AGE_MS;
+    if (hasStoredData && isExpired) {
+      for (const key of [
+        LEGACY_SAVED_STORAGE_KEY,
+        SAVED_IDS_STORAGE_KEY,
+        SAVED_CACHE_STORAGE_KEY,
+        SAVED_ISSUED_AT_KEY,
+      ]) {
+        window.localStorage.removeItem(key);
+      }
+      return { ids: [], cache: {} };
+    }
+  } catch {
+    return { ids: [], cache: {} };
+  }
+  const legacyItems = readLegacySavedItems().map(withoutDynamicOfferData);
+  let ids: string[] = [];
+  let rawCache: unknown = {};
+  let hasSavedIds = false;
+
+  try {
+    const storedIds = window.localStorage.getItem(SAVED_IDS_STORAGE_KEY);
+    hasSavedIds = storedIds !== null;
+    const parsedIds: unknown = JSON.parse(storedIds || '[]');
+    if (Array.isArray(parsedIds)) {
+      ids = [...new Set(parsedIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    }
+    rawCache = JSON.parse(window.localStorage.getItem(SAVED_CACHE_STORAGE_KEY) || '{}');
+  } catch {
+    // 잘못된 로컬 데이터는 레거시 찜 목록으로 복구합니다.
+  }
+
+  if (!hasSavedIds) {
+    ids = legacyItems.map((item) => item.product.id);
+  }
+
+  const cache: Record<string, RecommendationItem> = {};
+  if (isRecord(rawCache)) {
+    Object.entries(rawCache).forEach(([id, value]) => {
+      if (ids.includes(id) && isSavedRecommendationItem(value)) {
+        value.product.offers ??= [];
+        cache[id] = withoutDynamicOfferData(value);
+      }
+    });
+  }
+  legacyItems.forEach((item) => {
+    cache[item.product.id] ??= item;
+  });
+  return { ids, cache };
+}
+
+function savedItemPlaceholder(productId: string): RecommendationItem {
+  return {
+    product: {
+      id: productId,
+      name: '저장한 제품',
+      brand: '제품 정보 새로고침 필요',
+      category: 'skincare',
+      ingredients: [],
+      offers: [],
+    },
+    reason: '추천을 다시 실행하면 최신 제품 정보를 확인할 수 있어요.',
+    cautions: [],
+    matchedIngredients: [],
+  };
+}
+
+function formatPrice(price?: number, currency = 'KRW'): string {
+  if (price === undefined) {
+    return '판매가 미제공';
+  }
+  if (currency === 'KRW') {
+    return `${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(price)}원`;
+  }
+  try {
+    return new Intl.NumberFormat('ko-KR', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: currency === 'KRW' ? 0 : 2,
+    }).format(price);
+  } catch {
+    return `${new Intl.NumberFormat('ko-KR').format(price)} ${currency}`;
+  }
 }
 
 function productDisplayName(item: RecommendationItem): string {
@@ -153,36 +318,54 @@ function productDisplayName(item: RecommendationItem): string {
 
 function sourceLabel(item: RecommendationItem): string {
   if (item.product.catalogSource === 'open_beauty_facts') {
-    return 'Open Beauty Facts';
+    return '공개 상품 정보';
   }
-  return item.product.retailerName || '검증 카탈로그';
+  return '상품 정보';
 }
 
 function sourceDate(item: RecommendationItem): string {
-  const value = item.product.sourceUpdatedAt || item.product.priceCheckedAt;
+  const value = item.product.sourceUpdatedAt;
   const date = value?.match(/\d{4}-\d{2}-\d{2}/)?.[0];
   return date ? date.replace(/-/g, '.') : '';
 }
 
-function productAction(item: RecommendationItem): { label: string; url: string } {
-  const { product } = item;
-  const purchaseUrl = product.purchaseUrl || product.oliveyoungUrl;
-  if (purchaseUrl) {
-    return {
-      label: product.retailerName ? `${product.retailerName}에서 확인` : '판매처에서 확인',
-      url: purchaseUrl,
-    };
+function sourceAttributionUrl(product: Product): string | undefined {
+  if (product.catalogSource !== 'open_beauty_facts') {
+    return undefined;
   }
-  if (product.catalogSource === 'open_beauty_facts' && product.sourceUrl) {
-    return { label: '제품 데이터·출처 보기', url: product.sourceUrl };
+  for (const value of [product.sourceUrl, product.dataAttributionUrl]) {
+    if (!value) {
+      continue;
+    }
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol === 'https:' && parsed.hostname === 'world.openbeautyfacts.org') {
+        return parsed.toString();
+      }
+    } catch {
+      // Ignore malformed catalog metadata and use the canonical attribution URL.
+    }
   }
-  if (product.officialUrl) {
-    return { label: '공식 제품 정보 보기', url: product.officialUrl };
-  }
-  if (product.sourceUrl) {
-    return { label: '제품 정보 보기', url: product.sourceUrl };
-  }
-  return { label: '올리브영에서 검색', url: oliveYoungSearchUrl(productDisplayName(item)) };
+  return OBF_DATA_URL;
+}
+
+function offerSummary(product: Product): { lowestPrice?: number; currency?: string; retailerCount: number } {
+  const freshOffers = product.offers.filter(
+    (offer) => !offer.isStale
+      && offer.availability !== 'out_of_stock'
+      && offer.currency === 'KRW'
+      && offer.priceKrw !== undefined,
+  );
+  const lowestOffer = freshOffers.reduce<RetailOffer | undefined>(
+    (lowest, offer) => (!lowest || (offer.priceKrw as number) < (lowest.priceKrw as number) ? offer : lowest),
+    undefined,
+  );
+  return {
+    lowestPrice: product.commerce?.lowestFreshPriceKrw ?? lowestOffer?.priceKrw,
+    currency: product.commerce?.lowestFreshPriceCurrency ?? lowestOffer?.currency,
+    retailerCount: product.commerce?.retailerCount
+      ?? new Set(product.offers.map((offer) => offer.retailerId || offer.retailerName)).size,
+  };
 }
 
 function toggleInList(list: string[], value: string): string[] {
@@ -270,7 +453,8 @@ interface ProductCardProps {
   item: RecommendationItem;
   saved: boolean;
   onToggleSaved: (item: RecommendationItem) => void;
-  onOpenError: (message: string) => void;
+  onCompareOffers: (item: RecommendationItem) => void;
+  onOpenInformation: (url: string) => void;
   compact?: boolean;
   priority?: boolean;
 }
@@ -279,15 +463,30 @@ function ProductCard({
   item,
   saved,
   onToggleSaved,
-  onOpenError,
+  onCompareOffers,
+  onOpenInformation,
   compact = false,
   priority = false,
 }: ProductCardProps) {
   const { product } = item;
-  const action = productAction(item);
+  const summary = offerSummary(product);
   const [imageFailed, setImageFailed] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageUrl = imageFailed ? undefined : product.imageUrl;
+  const fallbackAttributionUrl = sourceAttributionUrl(product);
+  const informationLinks = product.externalLinks?.length
+    ? product.externalLinks
+    : fallbackAttributionUrl
+      ? [{
+          kind: 'data_reference' as const,
+          label: '상품 정보 출처',
+          provider: 'Open Beauty Facts',
+          url: fallbackAttributionUrl,
+        }]
+      : [];
+  const primaryInformationUrl = informationLinks[0]?.url;
+  const canCompareRetailers = summary.retailerCount > 0 || product.catalogSource === 'curated';
+  const canOpenInformation = !canCompareRetailers && Boolean(primaryInformationUrl);
 
   return (
     <article className={`product-card ${compact ? 'product-card--compact' : ''}`}>
@@ -326,7 +525,14 @@ function ProductCard({
             <p className="product-brand">{product.brand}</p>
             <h3>{productDisplayName(item)}</h3>
           </div>
-          <strong className="product-price">{formatPrice(product.priceKrw)}</strong>
+          <div className="product-commerce-summary">
+            <strong className="product-price">
+              {summary.lowestPrice !== undefined
+                ? `최저 ${formatPrice(summary.lowestPrice, summary.currency)}`
+                : canCompareRetailers ? '판매처에서 가격 확인' : '가격 정보 없음'}
+            </strong>
+            {summary.retailerCount > 0 && <span>판매처 {summary.retailerCount}곳</span>}
+          </div>
         </div>
 
         {(product.rating || product.reviewCount) && (
@@ -337,10 +543,19 @@ function ProductCard({
           </p>
         )}
 
-        <p className="source-row">
+        <div className="source-row">
           <span>{sourceLabel(item)}</span>
-          {sourceDate(item) && <span>데이터 수정 {sourceDate(item)}</span>}
-        </p>
+          {sourceDate(item) && <span>정보 기준 {sourceDate(item)}</span>}
+          {informationLinks.map((link) => (
+            <button
+              type="button"
+              key={`${link.kind}:${link.url}`}
+              onClick={() => onOpenInformation(link.url)}
+            >
+              {link.label}
+            </button>
+          ))}
+        </div>
 
         {!compact && (
           <>
@@ -373,17 +588,238 @@ function ProductCard({
         <button
           type="button"
           className="purchase-button"
+          disabled={!canCompareRetailers && !canOpenInformation}
           onClick={() => {
-            void openExternalUrl(action.url).catch((openError: unknown) => {
-              onOpenError(openError instanceof Error ? openError.message : '제품 정보 페이지를 열지 못했어요.');
-            });
+            if (canCompareRetailers) {
+              onCompareOffers(item);
+            } else if (primaryInformationUrl) {
+              onOpenInformation(primaryInformationUrl);
+            }
           }}
         >
-          {action.label}
+          {summary.retailerCount > 0
+            ? `판매처 ${summary.retailerCount}곳 비교`
+            : canOpenInformation ? '제품 정보 보기' : canCompareRetailers ? '판매처 확인' : '판매처 준비 중'}
           <ArrowIcon />
         </button>
       </div>
     </article>
+  );
+}
+
+function formatCheckedAt(value?: string): string {
+  if (!value) {
+    return '확인 시각 미제공';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return `${new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)} 확인`;
+}
+
+function availabilityLabel(offer: RetailOffer): string {
+  if (offer.availability === 'in_stock') {
+    return '재고 있음';
+  }
+  if (offer.availability === 'preorder') {
+    return '예약 판매';
+  }
+  if (offer.availability === 'out_of_stock') {
+    return '품절';
+  }
+  return '재고 확인 필요';
+}
+
+interface OfferComparisonDialogProps {
+  item: RecommendationItem;
+  offers: RetailOffer[];
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+  onClose: () => void;
+  onOpenError: (message: string) => void;
+}
+
+function OfferComparisonDialog({
+  item,
+  offers,
+  loading,
+  error,
+  onRetry,
+  onClose,
+  onOpenError,
+}: OfferComparisonDialogProps) {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const sortedOffers = useMemo(() => [...offers].sort((left, right) => {
+    const leftRank = left.isStale || left.availability === 'out_of_stock' ? 1 : 0;
+    const rightRank = right.isStale || right.availability === 'out_of_stock' ? 1 : 0;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    const currencyRank = (left.currency === 'KRW' ? 0 : 1) - (right.currency === 'KRW' ? 0 : 1);
+    if (currencyRank !== 0) {
+      return currencyRank;
+    }
+    if (left.currency === right.currency) {
+      return (left.priceAmount ?? Number.MAX_SAFE_INTEGER) - (right.priceAmount ?? Number.MAX_SAFE_INTEGER);
+    }
+    return left.retailerName.localeCompare(right.retailerName);
+  }), [offers]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const dialog = dialogRef.current;
+    dialog?.querySelector<HTMLButtonElement>('.offer-dialog-close')?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab' || !dialog) {
+        return;
+      }
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ));
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="offer-dialog-layer"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <section
+        className="offer-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="offer-dialog-title"
+        aria-describedby="offer-dialog-description"
+        ref={dialogRef}
+      >
+        <div className="offer-dialog-handle" aria-hidden="true" />
+        <header className="offer-dialog-header">
+          <div>
+            <p>{item.product.brand}</p>
+            <h2 id="offer-dialog-title">판매처 비교</h2>
+          </div>
+          <button type="button" className="offer-dialog-close" onClick={onClose} aria-label="판매처 비교 닫기">
+            ×
+          </button>
+        </header>
+        <p id="offer-dialog-description" className="offer-dialog-product-name">{productDisplayName(item)}</p>
+        <p className="external-transition-notice">구매 버튼을 누르면 토스를 벗어나 판매처 웹사이트로 이동해요. 실제 가격과 재고를 다시 확인해 주세요.</p>
+
+        {loading && offers.length === 0 ? (
+          <div className="offer-loading" role="status">최신 가격과 재고를 확인하고 있어요.</div>
+        ) : error && offers.length === 0 ? (
+          <div className="offer-error" role="alert">
+            <p>{error}</p>
+            <button type="button" onClick={onRetry}>다시 불러오기</button>
+          </div>
+        ) : sortedOffers.length > 0 ? (
+          <div className="offer-list">
+            {sortedOffers.map((offer) => (
+              <article className="offer-row" key={offer.id}>
+                <div className="offer-row-heading">
+                  <div>
+                    <strong>{offer.retailerName}</strong>
+                    {offer.isAffiliate && (
+                      <span className="affiliate-badge">{offer.affiliateLabel || '광고·제휴'}</span>
+                    )}
+                  </div>
+                  <div className="offer-price-block">
+                    {offer.listPriceAmount !== undefined && offer.priceAmount !== undefined && offer.listPriceAmount > offer.priceAmount && (
+                      <del>{formatPrice(offer.listPriceAmount, offer.currency)}</del>
+                    )}
+                    <strong>
+                      {offer.priceAmount !== undefined
+                        ? formatPrice(offer.priceAmount, offer.currency)
+                        : '판매처에서 가격 확인'}
+                    </strong>
+                  </div>
+                </div>
+                <div className="offer-meta">
+                  {offer.isLinkOnly ? (
+                    <>
+                      <span className="availability availability--unknown">판매처에서 확인</span>
+                      <span>가격·재고는 판매처의 최신 정보를 확인해 주세요.</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className={`availability availability--${offer.availability}`}>{availabilityLabel(offer)}</span>
+                      {offer.isStale && <span className="stale-badge">정보 업데이트 필요</span>}
+                      <span>{formatCheckedAt(offer.checkedAt)}</span>
+                    </>
+                  )}
+                </div>
+                {offer.isAffiliate && (
+                  <p className="affiliate-disclosure">
+                    {offer.affiliateDisclosure || '이 링크를 통해 구매하면 판매처로부터 수수료를 받을 수 있어요.'}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="offer-open-button"
+                  disabled={!offer.clickUrl}
+                  onClick={() => {
+                    if (!offer.clickUrl) {
+                      return;
+                    }
+                    void openExternalUrl(offer.clickUrl).catch((openError: unknown) => {
+                      onOpenError(openError instanceof Error ? openError.message : '판매처 페이지를 열지 못했어요.');
+                    });
+                  }}
+                >
+                  {offer.clickUrl
+                    ? offer.isLinkOnly ? `${offer.retailerName}에서 보기` : '판매처에서 확인'
+                    : '구매 링크 준비 중'}
+                  {offer.clickUrl && <ArrowIcon />}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="offer-empty" role="status">아직 연결된 판매처가 없어요. 제품 정보 보기에서 상세 정보를 확인해 주세요.</div>
+        )}
+
+        {loading && offers.length > 0 && <p className="offer-refreshing" role="status">최신 정보를 확인 중이에요.</p>}
+        {error && offers.length > 0 && <p className="offer-refreshing" role="status">{error}</p>}
+      </section>
+    </div>
   );
 }
 
@@ -394,7 +830,7 @@ function LoadingPanel() {
         <span />
       </div>
       <h2>딱 맞는 제품을 찾고 있어요</h2>
-      <p>검증 상품과 글로벌 오픈 카탈로그의 성분을 비교 중이에요.</p>
+      <p>여러 상품의 성분과 피부 적합도를 비교하고 있어요.</p>
       <div className="loading-steps" aria-hidden="true">
         <span className="is-active" />
         <span />
@@ -406,47 +842,82 @@ function LoadingPanel() {
 
 function App() {
   const safeArea = useSafeAreaInsets();
+  const initialSavedState = useRef<ReturnType<typeof readSavedState> | null>(null);
+  if (initialSavedState.current === null) {
+    initialSavedState.current = readSavedState();
+  }
   const [screen, setScreen] = useState<Screen>('survey');
   const [answers, setAnswers] = useState<SurveyAnswers>(INITIAL_ANSWERS);
   const [result, setResult] = useState<RecommendationResult | null>(null);
-  const [savedItems, setSavedItems] = useState<RecommendationItem[]>(readSavedItems);
+  const [savedProductIds, setSavedProductIds] = useState<string[]>(initialSavedState.current.ids);
+  const [savedItemCache, setSavedItemCache] = useState<Record<string, RecommendationItem>>(
+    initialSavedState.current.cache,
+  );
+  const [offerDialog, setOfferDialog] = useState<{
+    item: RecommendationItem;
+    offers: RetailOffer[];
+    loading: boolean;
+    error: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [validation, setValidation] = useState('');
   const [toast, setToast] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
   const screenStack = useRef<Screen[]>(['survey']);
+  const offerDialogTrigger = useRef<HTMLElement | null>(null);
   const skinQuestionRef = useRef<HTMLElement | null>(null);
   const categoryQuestionRef = useRef<HTMLElement | null>(null);
+  const privacyConsentRef = useRef<HTMLInputElement | null>(null);
 
-  const savedIds = useMemo(() => new Set(savedItems.map((item) => item.product.id)), [savedItems]);
+  const savedIds = useMemo(() => new Set(savedProductIds), [savedProductIds]);
+  const currentItems = useMemo(
+    () => new Map((result?.items || []).map((item) => [item.product.id, item])),
+    [result],
+  );
+  const savedItems = useMemo(
+    () => savedProductIds
+      .map((id) => currentItems.get(id) || savedItemCache[id] || savedItemPlaceholder(id)),
+    [currentItems, savedItemCache, savedProductIds],
+  );
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(SAVED_STORAGE_KEY, JSON.stringify(savedItems));
+      const cache = Object.fromEntries(
+        savedProductIds
+          .map((id) => [id, savedItemCache[id]] as const)
+          .filter((entry): entry is readonly [string, RecommendationItem] => Boolean(entry[1])),
+      );
+      window.localStorage.setItem(SAVED_IDS_STORAGE_KEY, JSON.stringify(savedProductIds));
+      window.localStorage.setItem(SAVED_CACHE_STORAGE_KEY, JSON.stringify(cache));
+      window.localStorage.setItem(SAVED_ISSUED_AT_KEY, String(Date.now()));
     } catch {
       // 저장 공간이 제한된 환경에서도 현재 세션의 찜 기능은 유지합니다.
     }
-  }, [savedItems]);
+  }, [savedItemCache, savedProductIds]);
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
   useEffect(() => {
-    if (screenStack.current.length <= 1) {
+    if (!offerDialog && screenStack.current.length <= 1) {
       return undefined;
     }
 
     try {
       return graniteEvent.addEventListener('backEvent', {
         onEvent: () => {
-          goBack();
+          if (offerDialog) {
+            closeOfferDialog();
+          } else {
+            goBack();
+          }
         },
         onError: () => undefined,
       });
     } catch {
       return undefined;
     }
-  }, [screen]);
+  }, [screen, offerDialog]);
 
   const appStyle = {
     '--safe-top': `${safeArea.top}px`,
@@ -492,12 +963,90 @@ function App() {
 
   function toggleSaved(item: RecommendationItem) {
     const alreadySaved = savedIds.has(item.product.id);
-    setSavedItems((current) =>
+    setSavedProductIds((current) =>
       alreadySaved
-        ? current.filter((saved) => saved.product.id !== item.product.id)
-        : [item, ...current.filter((saved) => saved.product.id !== item.product.id)],
+        ? current.filter((id) => id !== item.product.id)
+        : [item.product.id, ...current.filter((id) => id !== item.product.id)],
     );
+    setSavedItemCache((current) => {
+      const next = { ...current };
+      if (alreadySaved) {
+        delete next[item.product.id];
+      } else {
+        next[item.product.id] = withoutDynamicOfferData(item);
+      }
+      return next;
+    });
     showToast(alreadySaved ? '찜 목록에서 삭제했어요.' : '찜 목록에 저장했어요.');
+  }
+
+  async function deleteAllData() {
+    try {
+      await deleteAnonymousSessionData();
+      for (const key of [
+        LEGACY_SAVED_STORAGE_KEY,
+        SAVED_IDS_STORAGE_KEY,
+        SAVED_CACHE_STORAGE_KEY,
+        SAVED_ISSUED_AT_KEY,
+      ]) {
+        window.localStorage.removeItem(key);
+      }
+      setSavedProductIds([]);
+      setSavedItemCache({});
+      setResult(null);
+      setAnswers(INITIAL_ANSWERS);
+      setError('');
+      setValidation('');
+      goHome();
+      showToast('서버와 기기에 저장된 내 데이터를 삭제했어요.');
+    } catch (deleteError) {
+      showToast(deleteError instanceof Error ? deleteError.message : '데이터를 삭제하지 못했어요.');
+    }
+  }
+
+  function openPrivacyNotice() {
+    void openExternalUrl(privacyPolicyUrl()).catch((openError: unknown) => {
+      showToast(openError instanceof Error ? openError.message : '개인정보 처리 안내를 열지 못했어요.');
+    });
+  }
+
+  function openInformationUrl(url: string) {
+    void openExternalUrl(url).catch((openError: unknown) => {
+      showToast(openError instanceof Error ? openError.message : '외부 정보 페이지를 열지 못했어요.');
+    });
+  }
+
+  function closeOfferDialog() {
+    setOfferDialog(null);
+    window.requestAnimationFrame(() => offerDialogTrigger.current?.focus());
+  }
+
+  async function refreshOffers(item: RecommendationItem) {
+    const productId = item.product.id;
+    setOfferDialog((current) => current && current.item.product.id === productId
+      ? { ...current, loading: true, error: '' }
+      : current);
+    try {
+      const offers = await requestProductOffers(productId);
+      setOfferDialog((current) => current && current.item.product.id === productId
+        ? { ...current, offers, loading: false, error: '' }
+        : current);
+    } catch (offerError) {
+      const message = offerError instanceof Error ? offerError.message : '판매처 정보를 불러오지 못했어요.';
+      setOfferDialog((current) => current && current.item.product.id === productId
+        ? { ...current, loading: false, error: message }
+        : current);
+    }
+  }
+
+  function openOfferComparison(item: RecommendationItem) {
+    offerDialogTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const hasLegacyOffer = !item.product.commerce && item.product.offers.length > 0;
+    setOfferDialog({ item, offers: item.product.offers, loading: !hasLegacyOffer, error: '' });
+    if (hasLegacyOffer) {
+      return;
+    }
+    void refreshOffers(item);
   }
 
   async function runRecommendation() {
@@ -516,6 +1065,13 @@ function App() {
       window.requestAnimationFrame(() => {
         question?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
       });
+      return;
+    }
+
+    if (!answers.privacyConsent) {
+      setValidation('맞춤 추천을 저장하려면 개인정보 처리 안내를 확인하고 동의해 주세요.');
+      privacyConsentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      window.requestAnimationFrame(() => privacyConsentRef.current?.focus({ preventScroll: true }));
       return;
     }
 
@@ -663,7 +1219,7 @@ function App() {
                   <span>5</span>
                   <div>
                     <h2>예산은 어느 정도인가요?</h2>
-                    <p>최근 확인된 판매가가 있는 제품만 예산 조건에 포함돼요.</p>
+                    <p>가격 정보가 없는 제품은 판매처에서 직접 확인할 수 있어요.</p>
                   </div>
                 </div>
                 <div className="chip-group">
@@ -689,7 +1245,7 @@ function App() {
                   <span>6</span>
                   <div>
                     <h2>피하고 싶은 성분이 있나요?</h2>
-                    <p>알레르기가 있다면 직접 입력해 주세요.</p>
+                    <p>목록에 없으면 피하고 싶은 성분명을 직접 입력할 수 있어요.</p>
                   </div>
                 </div>
                 <ChipGroup
@@ -714,6 +1270,7 @@ function App() {
                       setAnswers((current) => ({ ...current, avoidIngredientsText: event.target.value }))
                     }
                   />
+                  <small>알레르기·임신·수유 같은 건강정보는 입력하지 말고, 피할 성분명만 적어 주세요.</small>
                 </label>
               </section>
 
@@ -732,25 +1289,43 @@ function App() {
                 </div>
               )}
 
+              <div className="privacy-consent">
+                <label>
+                  <input
+                    ref={privacyConsentRef}
+                    type="checkbox"
+                    checked={answers.privacyConsent}
+                    onChange={(event) => setAnswers((current) => ({
+                      ...current,
+                      privacyConsent: event.target.checked,
+                    }))}
+                  />
+                  <span>피부 정보와 피해야 할 성분으로 만든 통제 프로필을 맞춤 추천에 사용하고 최대 30일 보관하는 데 동의합니다.</span>
+                </label>
+                <button type="button" onClick={openPrivacyNotice}>개인정보 처리 안내</button>
+              </div>
+
               <button type="submit" className="primary-button">
                 내 피부 맞춤 제품 찾기
                 <ArrowIcon />
               </button>
-              <p className="privacy-note">로그인 없이 사용할 수 있고, 선택 내용은 추천에만 사용해요.</p>
+              <p className="privacy-note">로그인 없이 사용할 수 있고, 언제든 아래에서 내 데이터를 삭제할 수 있어요.</p>
             </form>
           </div>
         ) : screen === 'results' ? (
           <div className="results-screen">
             <section className="results-heading">
               <span className="eyebrow">맞춤 분석 완료</span>
-              {result?.catalogTotal && (
-                <p className="catalog-count">
-                  현재 {new Intl.NumberFormat('ko-KR').format(result.catalogTotal)}개 제품 데이터가 있어요 · 선택 조건에 맞는 모든 후보를 비교했어요
-                </p>
-              )}
               <h1>{result?.items.length || 0}개 제품을 골랐어요</h1>
               <p>{result?.summary}</p>
             </section>
+
+            {result?.rankingPolicy && (
+              <aside className="ranking-policy" aria-label="추천 순위 기준">
+                <strong>추천 순위 기준</strong>
+                <p>{result.rankingPolicy}</p>
+              </aside>
+            )}
 
             {result && result.items.length > 0 ? (
               <div className="results-list">
@@ -762,7 +1337,8 @@ function App() {
                       saved={savedIds.has(item.product.id)}
                       priority={index === 0}
                       onToggleSaved={toggleSaved}
-                      onOpenError={showToast}
+                      onCompareOffers={openOfferComparison}
+                      onOpenInformation={openInformationUrl}
                     />
                   </div>
                 ))}
@@ -778,7 +1354,14 @@ function App() {
             <div className="guardrail-note">
               <strong>구매 전 확인해 주세요</strong>
               <p>피부 반응은 개인마다 달라요. 민감 피부는 소량으로 패치 테스트하고, 가격·재고는 판매처에서 다시 확인해 주세요.</p>
-              <p>Open Beauty Facts 데이터는 ODbL, 상품 이미지는 CC BY-SA 조건으로 제공돼요. 최신 덤프를 매일 확인하지만 개별 커뮤니티 상품 정보는 오래됐거나 누락될 수 있어요.</p>
+              <details className="data-source-details">
+                <summary>데이터 출처 안내</summary>
+                <p>일부 공개 상품 정보는 오래됐거나 누락될 수 있어요. Open Beauty Facts 데이터는 ODbL, 상품 이미지는 CC BY-SA 조건으로 제공돼요.</p>
+                <div className="license-links" aria-label="Open Beauty Facts 라이선스">
+                  <button type="button" onClick={() => openInformationUrl(OBF_DATA_LICENSE_URL)}>데이터 ODbL 1.0</button>
+                  <button type="button" onClick={() => openInformationUrl(OBF_IMAGE_LICENSE_URL)}>이미지 CC BY-SA 3.0</button>
+                </div>
+              </details>
             </div>
 
             <button type="button" className="secondary-button" onClick={goHome}>조건 바꿔 다시 찾기</button>
@@ -800,7 +1383,8 @@ function App() {
                     saved
                     compact
                     onToggleSaved={toggleSaved}
-                    onOpenError={showToast}
+                    onCompareOffers={openOfferComparison}
+                    onOpenInformation={openInformationUrl}
                   />
                 ))}
               </div>
@@ -816,6 +1400,22 @@ function App() {
         )}
       </main>
 
+      <footer className="data-controls">
+        <button type="button" onClick={openPrivacyNotice}>개인정보 처리 안내</button>
+        <button type="button" onClick={() => void deleteAllData()}>내 데이터 삭제</button>
+      </footer>
+
+      {offerDialog && (
+        <OfferComparisonDialog
+          item={offerDialog.item}
+          offers={offerDialog.offers}
+          loading={offerDialog.loading}
+          error={offerDialog.error}
+          onRetry={() => void refreshOffers(offerDialog.item)}
+          onClose={closeOfferDialog}
+          onOpenError={showToast}
+        />
+      )}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );

@@ -1,0 +1,52 @@
+name: Maintain commerce data and approved retailer offers
+
+on:
+  schedule:
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: approved-retailer-offer-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Run protected retention cleanup and retailer sync
+        env:
+          SYNC_BASE_URL: ${{ secrets.RETAILER_SYNC_BASE_URL }}
+          SYNC_ADMIN_TOKEN: ${{ secrets.RETAILER_SYNC_ADMIN_TOKEN }}
+          SYNC_REQUEST_JSON: ${{ secrets.RETAILER_SYNC_REQUEST_JSON }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SYNC_BASE_URL" || -z "$SYNC_ADMIN_TOKEN" ]]; then
+            echo "Commerce maintenance endpoint secrets are not configured; skipping."
+            exit 0
+          fi
+          if [[ "$SYNC_BASE_URL" != https://* ]]; then
+            echo "RETAILER_SYNC_BASE_URL must use HTTPS."
+            exit 1
+          fi
+          cleanup_response="$(curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 600 \
+            --request POST "${SYNC_BASE_URL%/}/api/admin/cleanup" \
+            --header "X-Admin-Token: $SYNC_ADMIN_TOKEN")"
+          jq -e '.deleted | type == "number"' <<<"$cleanup_response" >/dev/null
+          jq . <<<"$cleanup_response"
+          if [[ -z "$SYNC_REQUEST_JSON" ]]; then
+            echo "Retention cleanup completed; retailer sync request is not configured."
+            exit 0
+          fi
+          response="$(curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 600 \
+            --request POST "${SYNC_BASE_URL%/}/api/admin/sources/sync" \
+            --header "Content-Type: application/json" \
+            --header "X-Admin-Token: $SYNC_ADMIN_TOKEN" \
+            --data "$SYNC_REQUEST_JSON")"
+          jq . <<<"$response"
+          jq -e '.ok == true' <<<"$response" >/dev/null

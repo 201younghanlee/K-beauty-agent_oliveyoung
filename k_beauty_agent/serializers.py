@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from .catalog_links import information_links
 from .knowledge_base import normalize_token
 from .knowledge_base import find_evidence_for_ingredient
 from .localization import (
@@ -15,6 +16,33 @@ from .localization import (
     translate_reason,
 )
 from .models import Product, ProductScore, Recommendation, SkinProfile
+
+
+_OPERATIONAL_PRICE_CAUTION_PREFIXES = (
+    "price is missing, so cannot verify under",
+    "checked price is missing, so cannot verify under",
+    "checked price is missing, so cannot verify over",
+    "Olive Young price is missing, so cannot verify under",
+    "excluded because listed price exceeds requested maximum",
+    "excluded because checked price exceeds requested maximum",
+    "excluded because checked price is below requested minimum",
+    "excluded because Olive Young snapshot price exceeds requested maximum",
+)
+
+
+def _customer_cautions(score: ProductScore, language: str | None) -> list[str]:
+    """Return safety and product-fit cautions, not ranking diagnostics.
+
+    Missing or stale price is represented by the commerce UI. Repeating an
+    internal budget-check message inside the recommendation reason makes the
+    product copy noisy and can expose implementation terminology.
+    """
+
+    return [
+        translate_caution(caution, language)
+        for caution in score.cautions
+        if not caution.startswith(_OPERATIONAL_PRICE_CAUTION_PREFIXES)
+    ]
 
 
 def product_to_dict(product: Product) -> dict[str, Any]:
@@ -65,8 +93,42 @@ def product_to_dict(product: Product) -> dict[str, Any]:
         "recommendation_tier": product.recommendation_tier,
         "data_license": product.data_license,
         "data_attribution_url": product.data_attribution_url,
+        "external_links": [link.to_public_dict() for link in information_links(product)],
         "ingredient_explanations": ingredient_explanations(product.ingredients),
     }
+
+
+def product_to_v2_dict(product: Product, commerce_summary: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Serialize a normalized product master without bypassing safe offer links.
+
+    Version 1 keeps its legacy retailer fields. Version 2 deliberately removes
+    those fields and exposes them through the commerce summary and offer API.
+    """
+
+    data = product_to_dict(product)
+    for key in (
+        "price_usd",
+        "oliveyoung_url",
+        "oliveyoung_price_krw",
+        "oliveyoung_verified_at",
+        "purchase_url",
+        "retailer_name",
+        "price_krw",
+        "price_checked_at",
+    ):
+        data.pop(key, None)
+    data["commerce"] = commerce_summary or {
+        "offer_count": 0,
+        "retailer_count": 0,
+        "fresh_offer_count": 0,
+        "stale_offer_count": 0,
+        "unknown_offer_count": 0,
+        "best_current_price": None,
+        "lowest_fresh_price_krw": None,
+        "has_affiliate_offers": False,
+        "offers_url": f"/api/v2/products/{product.id}/offers",
+    }
+    return data
 
 
 def score_to_dict(score: ProductScore, language: str | None = "en", personalized_reason: str | None = None) -> dict[str, Any]:
@@ -80,7 +142,7 @@ def score_to_dict(score: ProductScore, language: str | None = "en", personalized
         "reasons": score.reasons,
         "display_reasons": [translate_reason(reason, language) for reason in score.reasons],
         "cautions": score.cautions,
-        "display_cautions": [translate_caution(caution, language) for caution in score.cautions],
+        "display_cautions": _customer_cautions(score, language),
         "evidence": score.evidence,
         "display_evidence": [translate_evidence(evidence, language) for evidence in score.evidence],
         "matched_ingredients": score.matched_ingredients,
@@ -94,6 +156,8 @@ def score_to_dict(score: ProductScore, language: str | None = "en", personalized
 
 def profile_to_public_dict(profile: SkinProfile) -> dict[str, Any]:
     data = asdict(profile)
+    for field in ("allergies", "pregnant_or_nursing", "location_or_climate"):
+        data.pop(field, None)
     return data
 
 
@@ -152,7 +216,7 @@ def recommendation_to_dict(
 
 def fallback_personalized_reason(score: ProductScore, language: str | None = "en") -> str:
     reasons = [translate_reason(reason, language) for reason in score.reasons[:3]]
-    cautions = [translate_caution(caution, language) for caution in score.cautions[:1]]
+    cautions = _customer_cautions(score, language)[:1]
     if language == "ko":
         if reasons and cautions:
             return f"검색 조건과 맞는 근거는 {' '.join(reasons)} 다만 {cautions[0]}"

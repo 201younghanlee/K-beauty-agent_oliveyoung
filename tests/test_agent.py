@@ -3,6 +3,7 @@ import unittest
 
 from k_beauty_agent.agent import KBeautyAgent
 from k_beauty_agent.database import ProductDatabase
+from k_beauty_agent.models import SkinProfile
 from k_beauty_agent.recommender import IngredientHybridRecommender
 from k_beauty_agent.skin import analyze_skin_query
 
@@ -40,7 +41,12 @@ class KBeautyAgentTest(unittest.TestCase):
 
     def test_pregnancy_excludes_retinol(self) -> None:
         db = ProductDatabase.from_json(DB_PATH)
-        profile = analyze_skin_query("pregnant oily skin anti aging serum")
+        profile = SkinProfile(
+            skin_type="oily",
+            concerns=["anti_aging"],
+            desired_categories=["serum"],
+            pregnant_or_nursing=True,
+        )
         recommender = IngredientHybridRecommender()
         products = db.search("retinol serum", categories=["serum"], concerns=["anti_aging"], limit=10)
         scored = recommender.score_products(products, profile)

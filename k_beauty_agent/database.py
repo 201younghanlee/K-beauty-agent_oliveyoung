@@ -285,7 +285,9 @@ def _load_review_summaries(path: str | Path | None) -> dict[str, dict[str, objec
                 "negative_reviews": _split_review_field(row.get("negative_reviews", "")),
                 "positive_reviews_en": _split_review_field(row.get("positive_reviews_en", "")),
                 "negative_reviews_en": _split_review_field(row.get("negative_reviews_en", "")),
-                "review_source_url": row.get("review_source_url", "").strip(),
+                "review_source_url": (
+                    row.get("review_source_url") or row.get("source_url") or ""
+                ).strip(),
             }
     return summaries
 

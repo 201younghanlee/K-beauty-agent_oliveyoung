@@ -100,7 +100,7 @@ class KBeautyAgent:
         if not top:
             profile.follow_up_questions.extend(
                 [
-                    "Can you share any allergies or ingredients you must avoid?",
+                    "Which cosmetic ingredient names, if any, do you prefer to avoid?",
                     "Are you looking for cleanser, toner, serum, moisturizer, sunscreen, or a full basic routine?",
                 ]
             )
@@ -124,7 +124,7 @@ class KBeautyAgent:
             profile=profile,
             results=top,
             fallback_message=(
-                "No safe exact-category match was found after applying allergy filters, so I broadened the product search."
+                "No safe exact-category match was found after applying ingredient filters, so I broadened the product search."
                 if broadened
                 else None
             ),

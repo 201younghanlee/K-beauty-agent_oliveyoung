@@ -158,4 +158,4 @@ def _refresh_uncertainty(profile: SkinProfile) -> None:
             "What are your top concerns: oil control, acne, hydration, redness, pigmentation, or aging?"
         )
     if profile.skin_type == "sensitive" and not profile.avoid_ingredients:
-        profile.follow_up_questions.append("Do you react to fragrance, essential oils, alcohol, acids, or retinoids?")
+        profile.follow_up_questions.append("Are there any cosmetic ingredient names you prefer to avoid?")

@@ -1,11 +1,19 @@
+# Production durability upgrade profile. It uses the same service name as
+# render.yaml and can therefore upgrade the existing service to a paid plan and
+# change its data mount; it does not guarantee creation of a separate service.
+# Back up/export first and review current Render pricing before applying it.
 services:
   - type: web
     name: k-beauty-recommendation-agent
     runtime: python
-    plan: free
+    plan: starter
     buildCommand: pip install -r requirements.txt -c requirements.lock
     startCommand: uvicorn k_beauty_agent.web:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
+    disk:
+      name: k-beauty-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.11
@@ -36,11 +44,11 @@ services:
       - key: RECOMMEND_RATE_LIMIT_WINDOW_SECONDS
         value: "60"
       - key: DATABASE_URL
-        value: sqlite:////tmp/k_beauty_agent.sqlite3
+        value: sqlite:////var/data/k_beauty_agent.sqlite3
+      - key: EXTERNAL_CACHE_URL
+        value: sqlite:////var/data/external_product_cache.sqlite3
       - key: PRODUCT_SOURCE
         value: catalog_snapshot
-      - key: EXTERNAL_CACHE_URL
-        value: sqlite:////tmp/external_product_cache.sqlite3
       - key: KRW_PER_USD
         value: "1350"
       - key: OLIVEYOUNG_SNAPSHOT_CSV

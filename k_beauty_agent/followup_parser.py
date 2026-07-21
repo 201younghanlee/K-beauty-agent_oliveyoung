@@ -4,7 +4,14 @@ import json
 import re
 from typing import Any, Protocol
 
-from .skin import CATEGORY_TERMS, CONCERN_TERMS, SENSITIVITY_TERMS, SKIN_TYPE_TERMS, TEXTURE_TERMS
+from .skin import (
+    CATEGORY_TERMS,
+    CONCERN_TERMS,
+    SENSITIVITY_TERMS,
+    SKIN_TYPE_TERMS,
+    TEXTURE_TERMS,
+    canonicalize_ingredient_preferences,
+)
 
 
 class CompletionClient(Protocol):
@@ -17,7 +24,7 @@ ALLOWED_CONCERNS = set(CONCERN_TERMS) | {"dryness"}
 ALLOWED_CATEGORIES = set(CATEGORY_TERMS)
 ALLOWED_SENSITIVITIES = set(SENSITIVITY_TERMS) | {"gentle_preference", "budget_preference"}
 ALLOWED_TEXTURES = set(TEXTURE_TERMS)
-LIST_FIELDS = ("concerns", "desired_categories", "preferred_ingredients", "sensitivities", "allergies", "avoid_ingredients")
+LIST_FIELDS = ("concerns", "desired_categories", "preferred_ingredients", "sensitivities", "avoid_ingredients")
 
 
 def parse_follow_up_patch(
@@ -30,11 +37,11 @@ def parse_follow_up_patch(
 ) -> dict[str, Any]:
     system = (
         "You convert K-beauty follow-up requests into structured search constraints. "
-        "Return JSON only. Do not recommend products. Do not invent allergies, ingredients, prices, or concerns. "
+        "Return JSON only. Do not recommend products. Do not infer health conditions or invent ingredients, prices, or concerns. "
         "Only include fields that are explicitly requested or strongly implied by the follow-up. "
-        "Allowed fields: skin_type, concerns, desired_categories, preferred_ingredients, sensitivities, allergies, "
+        "Allowed fields: skin_type, concerns, desired_categories, preferred_ingredients, sensitivities, "
         "avoid_ingredients, max_price_usd, max_price_krw, min_price_usd, min_price_krw, texture_preference, "
-        "location_or_climate, pregnant_or_nursing. "
+        "Only use controlled cosmetic preference fields; never return health, allergy, pregnancy, nursing, or location data. "
         "Use canonical English tokens for categories/concerns/skin/texture. "
         "For Korean price phrases, '이하/under' maps to max_price_krw and '이상/over/at least' maps to min_price_krw."
     )
@@ -57,7 +64,7 @@ def parse_follow_up_patch(
                     "json": {"desired_categories": ["serum"], "min_price_krw": 30000},
                 },
                 {
-                    "follow_up": "히알루론산은 알러지라 빼고 더 산뜻한 선크림",
+                    "follow_up": "히알루론산은 빼고 더 산뜻한 선크림",
                     "json": {
                         "desired_categories": ["sunscreen"],
                         "avoid_ingredients": ["hyaluronic acid"],
@@ -93,8 +100,10 @@ def sanitize_profile_patch(data: Any) -> dict[str, Any]:
         if values:
             patch[field] = values
 
-    for field in ("preferred_ingredients", "allergies", "avoid_ingredients"):
-        values = _clean_list(data.get(field), max_items=12, max_len=50)
+    for field in ("preferred_ingredients", "avoid_ingredients"):
+        values = canonicalize_ingredient_preferences(
+            _clean_list(data.get(field), max_items=12, max_len=50)
+        )
         if values:
             patch[field] = values
 
@@ -107,13 +116,6 @@ def sanitize_profile_patch(data: Any) -> dict[str, Any]:
         value = _clean_float(data.get(field), limit)
         if value is not None:
             patch[field] = value
-
-    location = _clean_free_text(data.get("location_or_climate"), max_len=80)
-    if location:
-        patch["location_or_climate"] = location
-
-    if isinstance(data.get("pregnant_or_nursing"), bool):
-        patch["pregnant_or_nursing"] = data["pregnant_or_nursing"]
 
     return patch
 
