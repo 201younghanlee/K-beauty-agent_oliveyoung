@@ -17,6 +17,12 @@ services:
         value: "false"
       - key: PRODUCT_REASON_LLM_ENABLED
         value: "false"
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: YOUTUBE_SEARCH_DAILY_LIMIT
+        value: "90"
+      - key: YOUTUBE_REVIEW_CACHE_TTL_SECONDS
+        value: "86400"
       - key: ADMIN_TOKEN
         generateValue: true
       - key: SESSION_SECRET

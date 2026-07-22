@@ -6,6 +6,8 @@ import type {
   IngredientExplanation,
   Product,
   ProductExternalLink,
+  ProductVideoReview,
+  ProductVideoReviews,
   RecommendationItem,
   RecommendationResult,
   RetailOffer,
@@ -17,9 +19,10 @@ const SESSION_STORAGE_KEY = 'kBeautyAgentAnonymousSessionV1';
 const SESSION_ISSUED_AT_KEY = 'kBeautyAgentAnonymousSessionIssuedAtV1';
 const SESSION_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
 const REQUEST_TIMEOUT_MS = 60_000;
+const VIDEO_REVIEW_TIMEOUT_MS = 25_000;
 const DELETE_TIMEOUT_MS = 12_000;
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-export const PRIVACY_POLICY_VERSION = '2026-07-20';
+export const PRIVACY_POLICY_VERSION = '2026-07-22';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, '');
 
@@ -146,6 +149,10 @@ export async function getAnonymousSessionToken(persist = true): Promise<string> 
 
 export function privacyPolicyUrl(): string {
   return `${API_BASE_URL}/privacy`;
+}
+
+export function termsOfUseUrl(): string {
+  return `${API_BASE_URL}/terms`;
 }
 
 export async function deleteAnonymousSessionData(): Promise<void> {
@@ -977,6 +984,130 @@ export function normalizeOffersResponse(payload: unknown): RetailOffer[] {
     });
 }
 
+const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set(['www.youtube.com']);
+const YOUTUBE_THUMBNAIL_HOSTS = new Set(['i.ytimg.com', 'img.youtube.com']);
+
+function asExactHttpsUrl(
+  value: unknown,
+  allowedHosts: ReadonlySet<string>,
+  allowedPaths?: ReadonlySet<string>,
+): string | undefined {
+  const rawUrl = firstText(value);
+  if (!rawUrl) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(rawUrl);
+    if (
+      parsed.protocol !== 'https:'
+      || parsed.username
+      || parsed.password
+      || parsed.port
+      || !allowedHosts.has(parsed.hostname)
+      || (allowedPaths && !allowedPaths.has(parsed.pathname))
+    ) {
+      return undefined;
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeYouTubeVideo(value: unknown): ProductVideoReview | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const videoId = firstText(value.video_id, value.videoId);
+  const title = firstText(value.title);
+  const channelTitle = firstText(value.channel_title, value.channelTitle);
+  const url = asExactHttpsUrl(value.url, YOUTUBE_HOSTS, new Set(['/watch']));
+  if (!YOUTUBE_VIDEO_ID_PATTERN.test(videoId) || !title || !channelTitle || !url) {
+    return null;
+  }
+  if (new URL(url).searchParams.get('v') !== videoId) {
+    return null;
+  }
+  return {
+    videoId,
+    title: title.slice(0, 240),
+    channelTitle: channelTitle.slice(0, 160),
+    publishedAt: firstText(value.published_at, value.publishedAt).slice(0, 40) || undefined,
+    duration: firstText(value.duration).slice(0, 32) || undefined,
+    thumbnailUrl: asExactHttpsUrl(
+      value.thumbnail_url ?? value.thumbnailUrl,
+      YOUTUBE_THUMBNAIL_HOSTS,
+    ),
+    url,
+    hasPaidProductPlacement: asBoolean(
+      value.has_paid_product_placement ?? value.hasPaidProductPlacement,
+    ) ?? false,
+  };
+}
+
+export function normalizeProductVideoReviews(payload: unknown): ProductVideoReviews {
+  if (!isRecord(payload)) {
+    throw new Error('YouTube 후기 응답 형식을 확인할 수 없어요.');
+  }
+  const status = firstText(payload.status);
+  const allowedStatuses = new Set<ProductVideoReviews['status']>([
+    'ready',
+    'search_only',
+    'no_results',
+    'temporarily_unavailable',
+    'quota_limited',
+  ]);
+  const searchUrl = asExactHttpsUrl(
+    payload.search_url ?? payload.searchUrl,
+    YOUTUBE_HOSTS,
+    new Set(['/results']),
+  );
+  const termsUrl = asExactHttpsUrl(
+    payload.terms_url ?? payload.termsUrl,
+    YOUTUBE_HOSTS,
+    new Set(['/t/terms']),
+  );
+  const privacyUrl = asExactHttpsUrl(
+    payload.privacy_url ?? payload.privacyUrl,
+    new Set(['policies.google.com']),
+    new Set(['/privacy']),
+  );
+  if (
+    payload.provider !== 'YouTube'
+    || !allowedStatuses.has(status as ProductVideoReviews['status'])
+    || !searchUrl
+    || !termsUrl
+    || !privacyUrl
+  ) {
+    throw new Error('YouTube 후기 응답의 출처를 확인할 수 없어요.');
+  }
+
+  const seen = new Set<string>();
+  const videos = (Array.isArray(payload.videos) ? payload.videos : [])
+    .map(normalizeYouTubeVideo)
+    .filter((video): video is ProductVideoReview => {
+      if (!video || seen.has(video.videoId)) {
+        return false;
+      }
+      seen.add(video.videoId);
+      return true;
+    })
+    .slice(0, 3);
+
+  return {
+    provider: 'YouTube',
+    status: status as ProductVideoReviews['status'],
+    query: firstText(payload.query).slice(0, 240),
+    searchUrl,
+    messageKo: firstText(payload.message_ko, payload.messageKo).slice(0, 300),
+    disclaimerKo: firstText(payload.disclaimer_ko, payload.disclaimerKo).slice(0, 500),
+    termsUrl,
+    privacyUrl,
+    videos,
+  };
+}
+
 async function readErrorMessage(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as ApiErrorBody;
@@ -1073,6 +1204,47 @@ export async function requestProductOffers(productId: string): Promise<RetailOff
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new Error('판매처 정보를 불러오는 데 시간이 걸리고 있어요. 다시 시도해 주세요.');
+    }
+    if (error instanceof TypeError) {
+      throw new Error('네트워크 연결을 확인한 뒤 다시 시도해 주세요.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+export async function requestProductVideoReviews(
+  productId: string,
+  policyAccepted: boolean,
+): Promise<ProductVideoReviews> {
+  if (!policyAccepted) {
+    throw new Error('YouTube 관련 영상 기능의 이용조건과 개인정보 처리 안내에 먼저 동의해 주세요.');
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), VIDEO_REVIEW_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v2/products/${encodeURIComponent(productId)}/video-reviews?limit=3`,
+      {
+        method: 'GET',
+        mode: 'cors',
+        credentials: 'omit',
+        cache: 'no-store',
+        headers: {
+          'X-YouTube-Policy-Accepted': PRIVACY_POLICY_VERSION,
+        },
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response));
+    }
+    return normalizeProductVideoReviews(await response.json());
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('YouTube 관련 영상을 불러오는 데 시간이 걸리고 있어요. 다시 시도해 주세요.');
     }
     if (error instanceof TypeError) {
       throw new Error('네트워크 연결을 확인한 뒤 다시 시도해 주세요.');

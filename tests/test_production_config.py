@@ -98,6 +98,7 @@ def test_render_blueprints_preserve_operator_managed_partner_secrets() -> None:
         blueprint = (root / filename).read_text()
         assert "pip install -r requirements.txt -c requirements.lock" in blueprint
         for key in (
+            "YOUTUBE_API_KEY",
             "PARTNER_FEEDS_JSON",
             "ACTIVE_AFFILIATE_SOURCE_IDS",
             "COUPANG_PARTNERS_ACCESS_KEY",

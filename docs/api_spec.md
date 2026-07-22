@@ -90,7 +90,7 @@ Returns personalized skincare recommendations from the current multi-source cata
   "use_openai": false,
   "language": "en",
   "privacy_consent": true,
-  "privacy_policy_version": "2026-07-20",
+  "privacy_policy_version": "2026-07-22",
   "profile": {
     "skin_type": "oily",
     "concerns": ["oil_control"],
@@ -173,5 +173,30 @@ LLM. Follow-up constraints are parsed locally into the same controlled fields.
   the explicit link-only source policy.
 - `GET /api/v2/catalog/status` exposes public product/variant/retailer/offer and
   freshness counts without click, conversion, program, or ingestion-error data.
+
+## Product-related YouTube videos
+
+- `GET /api/v2/products/{product_id}/video-reviews?limit=3` performs a lazy,
+  server-side search using the canonical product brand and name. It does not
+  accept a public search query and never changes recommendation ranking or
+  evidence confidence.
+- The request must include `X-YouTube-Policy-Accepted: 2026-07-22`. Missing or
+  stale acceptance returns `428`; request bursts return `429` with
+  `Retry-After`. The miniapp sends this header only after the required service
+  terms and privacy-policy checkbox is accepted.
+- When `YOUTUBE_API_KEY` is configured, the response contains up to three
+  canonical public `youtube.com/watch` links with the API-provided title,
+  channel, publication date, duration, and positive paid-product-placement
+  disclosure when YouTube reports it.
+- `status` is one of `ready`, `search_only`, `no_results`,
+  `temporarily_unavailable`, or `quota_limited`. Every response includes a
+  product-specific `search_url`, YouTube Terms link, Google Privacy link, and a
+  customer disclaimer. The search link is the fallback when the key, quota, or
+  upstream API is unavailable.
+- Cached results are served for no more than 24 hours and expired entries are
+  purged on subsequent cache activity. The daily circuit breaker uses YouTube's
+  Pacific Time quota day and an atomic SQLite ledger. Video metadata is not included
+  in the recommendation response, stored in user profiles, or used as review
+  rating evidence.
 
 The compact reference API under `app/` has a separate `/api/compare` endpoint and legacy request shape. It is retained for portfolio examples but is not the Render production entry point.

@@ -50,6 +50,36 @@ export interface CommerceSummary {
   hasAffiliateOffers: boolean;
 }
 
+export type VideoReviewStatus =
+  | 'ready'
+  | 'search_only'
+  | 'no_results'
+  | 'temporarily_unavailable'
+  | 'quota_limited';
+
+export interface ProductVideoReview {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  publishedAt?: string;
+  duration?: string;
+  thumbnailUrl?: string;
+  url: string;
+  hasPaidProductPlacement: boolean;
+}
+
+export interface ProductVideoReviews {
+  provider: 'YouTube';
+  status: VideoReviewStatus;
+  query: string;
+  searchUrl: string;
+  messageKo: string;
+  disclaimerKo: string;
+  termsUrl: string;
+  privacyUrl: string;
+  videos: ProductVideoReview[];
+}
+
 export interface ProductExternalLink {
   kind: 'brand_official' | 'ingredient_reference' | 'data_reference' | 'review_reference';
   label: string;

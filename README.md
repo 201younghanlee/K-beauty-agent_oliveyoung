@@ -188,7 +188,7 @@ creation, leave the partner-feed, affiliate-source, and Coupang credential
 secret prompts empty until approvals exist; `sync: false` prevents later
 Blueprint syncs from overwriting values managed in the Render dashboard.
 
-- `PARTNER_FEEDS_JSON`, `ACTIVE_AFFILIATE_SOURCE_IDS`, and Coupang credentials are operator-managed secrets
+- `YOUTUBE_API_KEY`, `PARTNER_FEEDS_JSON`, `ACTIVE_AFFILIATE_SOURCE_IDS`, and Coupang credentials are operator-managed secrets
 
 - `PRODUCT_SOURCE=catalog_snapshot` for deterministic startup from the curated and checked-in generated catalogs
 - `PUBLIC_LLM_ENABLED=false` so public traffic cannot spend OpenAI credits
@@ -222,6 +222,9 @@ app/ and agent/     compact reference API retained for portfolio examples
 | `OPENAI_API_KEY` | Optional explanation of already-ranked results | unset |
 | `OPENAI_MODEL` | OpenAI model name | `gpt-5.4-mini` |
 | `PUBLIC_LLM_ENABLED` | Allows public endpoints to call OpenAI | `false` on Render |
+| `YOUTUBE_API_KEY` | Server-only YouTube Data API key for lazy product-review video search | unset; product-specific YouTube search link fallback remains available |
+| `YOUTUBE_SEARCH_DAILY_LIMIT` | Maximum unique uncached YouTube searches per Pacific Time quota day, reserved atomically in SQLite | `90` |
+| `YOUTUBE_REVIEW_CACHE_TTL_SECONDS` | YouTube result cache lifetime, capped at 24 hours | `86400` |
 | `ADMIN_TOKEN` | Protects admin metrics and maintenance APIs | generated |
 | `SESSION_SECRET` | HMAC key for anonymized session logging | generated |
 | `AFFILIATE_REDIRECT_SECRET` | Separate HMAC key for expiring retailer redirects | generated |
@@ -246,3 +249,4 @@ See `.env.example` for the complete local configuration.
 - Users with allergies or skin conditions should verify current packaging and seek qualified medical advice. The public app does not accept allergy, pregnancy, or nursing information until a separate sensitive-data consent flow is implemented.
 - Open Beauty Facts database content is available under [ODbL 1.0](https://opendatacommons.org/licenses/odbl/1-0/), and its product images are available under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/). Product cards link back to the source record; see `data/README.md` and the manifest for attribution details.
 - OpenAI failures fall back to grounded rule-based explanations.
+- Product-related videos are fetched only after the user accepts the service terms/privacy notice and taps the YouTube section. They are public YouTube search results, do not affect product ranking or evidence confidence, and fall back to a product-specific YouTube results page when the server key or quota is unavailable. Configure the key only in Render after enabling YouTube Data API v3 and restricting the credential to that API.

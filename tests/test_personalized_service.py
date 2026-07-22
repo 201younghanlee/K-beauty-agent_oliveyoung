@@ -941,6 +941,59 @@ class PersonalizedServiceApiTest(unittest.TestCase):
             }
         self.assertEqual(after, before)
 
+    def test_previous_policy_consent_is_stateless_until_current_notice_is_accepted(self) -> None:
+        session_id = "miniapp-previous-policy_1234567890"
+        tables = (
+            "sessions",
+            "privacy_consents",
+            "conversation_turns",
+            "recommendations",
+            "feedback",
+            "openai_calls",
+            "app_events",
+            "selections",
+        )
+        with self.web.store.connect() as connection:
+            before = {
+                table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in tables
+            }
+
+        response = self.client.post(
+            "/api/v2/recommend",
+            headers={self.web.SESSION_HEADER: session_id},
+            json={
+                "query": "수분 세럼 추천",
+                "use_openai": False,
+                "privacy_consent": True,
+                "privacy_policy_version": "2026-07-20",
+                "language": "ko",
+                "profile": {
+                    "skin_type": "dry",
+                    "concerns": ["hydration"],
+                    "desired_categories": ["serum"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["recommendation_id"])
+        self.assertEqual(
+            response.json()["privacy"],
+            {
+                "stored": False,
+                "policy_version": None,
+                "required_policy_version": self.web.PRIVACY_POLICY_VERSION,
+                "consent_refresh_required": True,
+            },
+        )
+        with self.web.store.connect() as connection:
+            after = {
+                table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in tables
+            }
+        self.assertEqual(after, before)
+
     def test_feedback_rejects_free_text_comment_field(self) -> None:
         response = self.client.post(
             "/api/feedback",

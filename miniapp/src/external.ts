@@ -19,6 +19,6 @@ export async function openExternalUrl(url: string): Promise<void> {
   try {
     await openURL(url);
   } catch {
-    throw new Error('제품 정보 페이지를 열지 못했어요. 잠시 후 다시 시도해 주세요.');
+    throw new Error('외부 페이지를 열지 못했어요. 잠시 후 다시 시도해 주세요.');
   }
 }

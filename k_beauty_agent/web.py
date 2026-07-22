@@ -46,6 +46,9 @@ from .config import (
     secure_cookies,
     sqlite_path_from_url,
     validate_runtime_secrets,
+    youtube_api_key,
+    youtube_review_cache_ttl_seconds,
+    youtube_search_daily_limit,
 )
 from .commerce import CommerceService, RedirectTokenError, disclosure_metadata
 from .database import ProductDatabase
@@ -61,14 +64,19 @@ from .serializers import product_to_dict, product_to_v2_dict, recommendation_to_
 from .storage import SQLiteStore, SessionWriteLimitError, hash_session
 from .skin import analyze_skin_query
 from .source_adapters import configured_sources, source_status
+from .video_reviews import YouTubeReviewService
 
 SESSION_COOKIE = "kbeauty_session_id"
 SESSION_HEADER = "X-KBeauty-Session"
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
 COOKIE_MAX_AGE = 30 * 86400
 RATE_LIMIT_MAX_BUCKETS = 10_000
+VIDEO_REVIEW_RATE_LIMIT_REQUESTS = 8
+VIDEO_REVIEW_GLOBAL_RATE_LIMIT_REQUESTS = 30
+VIDEO_REVIEW_RATE_LIMIT_WINDOW_SECONDS = 5 * 60
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
-PRIVACY_POLICY_VERSION = "2026-07-20"
+PRIVACY_POLICY_VERSION = "2026-07-22"
+YOUTUBE_POLICY_ACCEPTANCE_VERSION = PRIVACY_POLICY_VERSION
 
 logger = logging.getLogger("k_beauty_agent")
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -116,6 +124,9 @@ async def _app_lifespan(_: FastAPI):
         yield
     finally:
         _close_retailer_sources(list(globals().get("_source_registry", [])))
+        review_service = globals().get("youtube_reviews")
+        if isinstance(review_service, YouTubeReviewService):
+            review_service.close()
 
 
 def _build_agent() -> KBeautyAgent:
@@ -195,6 +206,12 @@ store = SQLiteStore(sqlite_path_from_url())
 store.apply_public_profile_minimization_migration()
 agent = _build_agent()
 commerce = CommerceService(store, affiliate_redirect_secret())
+youtube_reviews = YouTubeReviewService(
+    youtube_api_key(),
+    daily_search_limit=youtube_search_daily_limit(),
+    cache_ttl_seconds=youtube_review_cache_ttl_seconds(),
+    quota_store=store,
+)
 _close_retailer_sources(list(globals().get("_source_registry", [])))
 _source_registry = configured_sources(include_disabled=True)
 commerce.reconcile_source_activation(
@@ -254,7 +271,7 @@ class RecommendRequest(BaseModel):
     language: Literal["en", "ko"] = "en"
     profile: RecommendationProfileRequest | None = None
     privacy_consent: bool = False
-    privacy_policy_version: Literal["2026-07-20"] = PRIVACY_POLICY_VERSION
+    privacy_policy_version: Literal["2026-07-20", "2026-07-22"] = PRIVACY_POLICY_VERSION
 
 
 class FeedbackRequest(BaseModel):
@@ -366,6 +383,39 @@ def _check_recommendation_rate_limit(request: Request, session_id: str) -> None:
                 headers={"Retry-After": str(window)},
             )
 
+        for bucket, _ in buckets:
+            bucket.append(now)
+        while len(_rate_limit_buckets) > RATE_LIMIT_MAX_BUCKETS:
+            _rate_limit_buckets.popitem(last=False)
+
+
+def _check_video_review_rate_limit(request: Request) -> None:
+    now = time.monotonic()
+    client_label = (request.client.host if request.client else "unknown")[:200]
+    limits_by_identifier = {
+        "video-review:global": VIDEO_REVIEW_GLOBAL_RATE_LIMIT_REQUESTS,
+    }
+    try:
+        if ipaddress.ip_address(client_label).is_global:
+            client_hash = hashlib.sha256(client_label.encode("utf-8")).hexdigest()[:24]
+            limits_by_identifier[f"video-review:client:{client_hash}"] = VIDEO_REVIEW_RATE_LIMIT_REQUESTS
+    except ValueError:
+        pass
+
+    with _rate_limit_lock:
+        buckets: list[tuple[deque[float], int]] = []
+        for identifier, identifier_limit in limits_by_identifier.items():
+            bucket = _rate_limit_buckets.setdefault(identifier, deque())
+            while bucket and now - bucket[0] >= VIDEO_REVIEW_RATE_LIMIT_WINDOW_SECONDS:
+                bucket.popleft()
+            _rate_limit_buckets.move_to_end(identifier)
+            buckets.append((bucket, identifier_limit))
+        if any(len(bucket) >= identifier_limit for bucket, identifier_limit in buckets):
+            raise HTTPException(
+                status_code=429,
+                detail="영상 요청이 잠시 몰렸어요. 잠시 후 다시 확인해 주세요.",
+                headers={"Retry-After": str(VIDEO_REVIEW_RATE_LIMIT_WINDOW_SECONDS)},
+            )
         for bucket, _ in buckets:
             bucket.append(now)
         while len(_rate_limit_buckets) > RATE_LIMIT_MAX_BUCKETS:
@@ -485,6 +535,11 @@ def privacy_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "privacy.html")
 
 
+@app.get("/terms")
+def terms_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "terms.html")
+
+
 @app.get("/health")
 def health() -> dict[str, object]:
     return {
@@ -493,6 +548,10 @@ def health() -> dict[str, object]:
         "product_source": product_source(),
         "product_source_status": _product_source_status(),
         "public_llm_enabled": public_llm_enabled(),
+        "youtube_reviews": {
+            "api_configured": youtube_reviews.configured,
+            "fallback": "product_specific_youtube_search",
+        },
     }
 
 
@@ -597,6 +656,28 @@ def product_offers_v2(product_id: str) -> dict[str, object]:
     if agent.database.get(product_id) is None:
         raise HTTPException(status_code=404, detail="Unknown product_id")
     return commerce.offers_for_product(product_id)
+
+
+@app.get("/api/v2/products/{product_id}/video-reviews")
+def product_video_reviews_v2(
+    request: Request,
+    product_id: str,
+    limit: int = Query(default=3, ge=1, le=3),
+    x_youtube_policy_accepted: str | None = Header(
+        default=None,
+        alias="X-YouTube-Policy-Accepted",
+    ),
+) -> dict[str, object]:
+    if x_youtube_policy_accepted != YOUTUBE_POLICY_ACCEPTANCE_VERSION:
+        raise HTTPException(
+            status_code=428,
+            detail="YouTube 관련 영상 기능의 이용조건과 개인정보 처리 안내에 먼저 동의해 주세요.",
+        )
+    product = agent.database.get(product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Unknown product_id")
+    _check_video_review_rate_limit(request)
+    return youtube_reviews.reviews_for_product(product, limit=limit)
 
 
 @app.get("/api/v2/catalog/status")
@@ -944,7 +1025,12 @@ def _recommend(payload: RecommendRequest, request: Request, response: Response, 
         if len(concerns) != len(set(concerns)):
             _raise_profile_validation("duplicate_concerns", payload.language)
     started = time.perf_counter()
-    consented = payload.privacy_consent
+    # Keep the immediately previous client version usable during the staged
+    # Toss rollout, but never treat consent to an older notice as consent to
+    # the current policy. Legacy clients still receive a stateless result and
+    # write no session, profile, recommendation, turn, or event rows.
+    policy_is_current = payload.privacy_policy_version == PRIVACY_POLICY_VERSION
+    consented = payload.privacy_consent and policy_is_current
     if is_follow_up and not consented:
         raise HTTPException(status_code=400, detail="Privacy consent is required for saved-session follow-up")
     if consented:
@@ -1042,7 +1128,9 @@ def _recommend(payload: RecommendRequest, request: Request, response: Response, 
         result["recommendation_id"] = None
     result["privacy"] = {
         "stored": consented,
-        "policy_version": payload.privacy_policy_version if consented else None,
+        "policy_version": PRIVACY_POLICY_VERSION if consented else None,
+        "required_policy_version": PRIVACY_POLICY_VERSION,
+        "consent_refresh_required": payload.privacy_consent and not policy_is_current,
     }
     return result
 

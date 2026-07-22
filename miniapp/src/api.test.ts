@@ -3,6 +3,7 @@ import {
   buildStructuredProfile,
   ingredientSelectionConflicts,
   normalizeOffersResponse,
+  normalizeProductVideoReviews,
   normalizeResponse,
 } from './api';
 import type { SurveyAnswers } from './types';
@@ -574,6 +575,66 @@ describe('normalizeOffersResponse', () => {
   });
 });
 
+describe('normalizeProductVideoReviews', () => {
+  it('keeps only canonical YouTube watch links and deduplicates videos', () => {
+    const result = normalizeProductVideoReviews({
+      provider: 'YouTube',
+      status: 'ready',
+      query: 'Round Lab cleanser 후기',
+      search_url: 'https://www.youtube.com/results?search_query=Round+Lab+cleanser',
+      message_ko: '관련 영상을 찾았어요.',
+      disclaimer_ko: 'YouTube 검색 결과예요.',
+      terms_url: 'https://www.youtube.com/t/terms',
+      privacy_url: 'https://policies.google.com/privacy',
+      videos: [
+        {
+          video_id: 'abcDEF_123-',
+          title: '30일 사용 후기',
+          channel_title: '스킨 크리에이터',
+          published_at: '2026-07-01T00:00:00Z',
+          url: 'https://www.youtube.com/watch?v=abcDEF_123-',
+          thumbnail_url: 'https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg',
+          has_paid_product_placement: true,
+        },
+        {
+          video_id: 'abcDEF_123-',
+          title: '중복 영상',
+          channel_title: '다른 채널',
+          url: 'https://www.youtube.com/watch?v=abcDEF_123-',
+        },
+        {
+          video_id: 'xyzXYZ_987-',
+          title: '악성 호스트',
+          channel_title: '위장 채널',
+          url: 'https://www.youtube.com.attacker.example/watch?v=xyzXYZ_987-',
+        },
+      ],
+    });
+
+    expect(result.videos).toEqual([{
+      videoId: 'abcDEF_123-',
+      title: '30일 사용 후기',
+      channelTitle: '스킨 크리에이터',
+      publishedAt: '2026-07-01T00:00:00Z',
+      duration: undefined,
+      thumbnailUrl: 'https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg',
+      url: 'https://www.youtube.com/watch?v=abcDEF_123-',
+      hasPaidProductPlacement: true,
+    }]);
+  });
+
+  it('rejects lookalike search and policy origins', () => {
+    expect(() => normalizeProductVideoReviews({
+      provider: 'YouTube',
+      status: 'search_only',
+      search_url: 'https://www.youtube.com.attacker.example/results?search_query=test',
+      terms_url: 'https://www.youtube.com/t/terms',
+      privacy_url: 'https://policies.google.com/privacy',
+      videos: [],
+    })).toThrow('출처를 확인할 수 없어요');
+  });
+});
+
 describe('anonymous session privacy', () => {
   let browserStorage: {
     getItem: ReturnType<typeof vi.fn>;
@@ -672,6 +733,45 @@ describe('anonymous session privacy', () => {
     expect(browserStorage.setItem).not.toHaveBeenCalled();
     const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(options.headers).toBeUndefined();
+  });
+
+  it('loads product video reviews lazily without creating a user session', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        provider: 'YouTube',
+        status: 'search_only',
+        query: '제품 후기',
+        search_url: 'https://www.youtube.com/results?search_query=%EC%A0%9C%ED%92%88+%ED%9B%84%EA%B8%B0',
+        message_ko: 'YouTube에서 찾아보세요.',
+        disclaimer_ko: '공개 검색 결과예요.',
+        terms_url: 'https://www.youtube.com/t/terms',
+        privacy_url: 'https://policies.google.com/privacy',
+        videos: [],
+      }),
+    });
+    const { requestProductVideoReviews } = await import('./api');
+
+    const result = await requestProductVideoReviews('product/unsafe', true);
+
+    expect(result.status).toBe('search_only');
+    expect(fetchMock.mock.calls[0][0]).toContain('/products/product%2Funsafe/video-reviews?limit=3');
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.headers).toEqual({ 'X-YouTube-Policy-Accepted': '2026-07-22' });
+    expect(nativeStorage.getItem).not.toHaveBeenCalled();
+    expect(nativeStorage.setItem).not.toHaveBeenCalled();
+    expect(browserStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('does not call the video endpoint before policy acceptance', async () => {
+    const { requestProductVideoReviews } = await import('./api');
+
+    await expect(requestProductVideoReviews('product-1', false)).rejects.toThrow('먼저 동의해 주세요');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(nativeStorage.getItem).not.toHaveBeenCalled();
+    expect(browserStorage.getItem).not.toHaveBeenCalled();
   });
 
   it('deletes an existing stored session and clears both stores', async () => {
