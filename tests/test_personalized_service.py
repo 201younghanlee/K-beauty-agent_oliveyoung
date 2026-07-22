@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import tempfile
 import unittest
@@ -11,7 +12,13 @@ from k_beauty_agent.config import admin_token, session_secret
 from k_beauty_agent.database import ProductDatabase
 from k_beauty_agent.followup_parser import parse_follow_up_patch, sanitize_profile_patch
 from k_beauty_agent.knowledge_base import find_evidence_for_ingredient
-from k_beauty_agent.personalization import apply_profile_patch, build_personalization, merge_profiles, profile_to_dict
+from k_beauty_agent.personalization import (
+    apply_profile_patch,
+    build_personalization,
+    merge_profiles,
+    profile_from_dict,
+    profile_to_dict,
+)
 from k_beauty_agent.recommender import IngredientHybridRecommender
 from k_beauty_agent.serializers import product_to_dict
 from k_beauty_agent.storage import SQLiteStore
@@ -69,8 +76,24 @@ class PersonalizedServiceUnitTest(unittest.TestCase):
         for item in follow_up.results:
             self.assertIsNotNone(item.product.price_usd)
             self.assertLessEqual(item.product.price_usd, 20.0)
-            ingredients = " ".join(item.product.ingredients).lower()
-            self.assertIn("niacinamide", ingredients)
+        self.assertIn(
+            "niacinamide",
+            " ".join(follow_up.results[0].product.ingredients).lower(),
+        )
+
+    def test_legacy_sensitive_skin_type_migrates_to_separate_sensitivity_axis(self) -> None:
+        stored = profile_from_dict({"skin_type": "sensitive", "concerns": ["redness"]})
+        patch = sanitize_profile_patch({"skin_type": "sensitive"})
+        explicit_patch = sanitize_profile_patch(
+            {"skin_type": "sensitive", "sensitivity_level": "occasional"}
+        )
+
+        self.assertEqual(stored.skin_type, "unknown")
+        self.assertEqual(stored.sensitivity_level, "frequent")
+        self.assertEqual(patch["skin_type"], "unknown")
+        self.assertEqual(patch["sensitivity_level"], "frequent")
+        self.assertEqual(explicit_patch["skin_type"], "unknown")
+        self.assertEqual(explicit_patch["sensitivity_level"], "occasional")
 
     def test_follow_up_product_category_replaces_previous_category(self) -> None:
         stored = profile_to_dict(merge_profiles(None, "지성 피부 선크림 추천", []))
@@ -136,7 +159,7 @@ class PersonalizedServiceUnitTest(unittest.TestCase):
         self.assertNotIn("skin_type", patch)
         self.assertEqual(patch["desired_categories"], ["sunscreen"])
         self.assertEqual(patch["concerns"], ["oil_control"])
-        self.assertEqual(patch["avoid_ingredients"], ["hyaluronic acid script", "niacinamide"])
+        self.assertEqual(patch["avoid_ingredients"], ["hyaluronic acid", "niacinamide"])
         self.assertNotIn("max_price_krw", patch)
         self.assertEqual(patch["min_price_krw"], 30000)
         self.assertNotIn("delete_all_filters", patch)
@@ -273,12 +296,13 @@ class PersonalizedServiceUnitTest(unittest.TestCase):
         self.assertIn("oliveyoung_url", data)
         self.assertIn("oliveyoung_price_krw", data)
         self.assertIn("official_url", data)
-        self.assertIn("review_summary_en", data)
-        self.assertTrue(data["review_summary_en"])
-        self.assertIn("positive_reviews", data)
-        self.assertIn("negative_reviews", data)
-        self.assertIn("positive_reviews_en", data)
-        self.assertIn("negative_reviews_en", data)
+        self.assertIsNone(data["review_summary_en"])
+        self.assertEqual(data["positive_reviews"], [])
+        self.assertEqual(data["negative_reviews"], [])
+        self.assertEqual(data["positive_reviews_en"], [])
+        self.assertEqual(data["negative_reviews_en"], [])
+        self.assertIsNone(data["rating"])
+        self.assertIsNone(data["review_count"])
         self.assertIn("review_source_url", data)
         self.assertIn("ingredient_explanations", data)
         self.assertTrue(data["ingredient_explanations"])
@@ -409,10 +433,17 @@ class PersonalizedServiceUnitTest(unittest.TestCase):
         self.assertIn('addCurrentResultsToSelection("compare")', app_js)
         self.assertIn('addCurrentResultsToSelection("saved")', app_js)
         self.assertIn('await apiJson("/api/profile", { method: "DELETE" })', app_js)
-        self.assertIn('const RENDER_API_BASE_URL = "https://k-beauty-recommendation-agent-gafd.onrender.com";', app_js)
-        self.assertIn('credentials: "include"', app_js)
+        self.assertIn('const API_BASE_URL = "";', app_js)
+        self.assertNotIn("RENDER_API_BASE_URL", app_js)
+        self.assertIn('credentials: "omit"', app_js)
+        self.assertIn('"X-KBeauty-Session": getAnonymousSessionToken()', app_js)
+        self.assertIn("function rotateAnonymousSessionToken()", app_js)
+        self.assertNotIn('credentials: "include"', app_js)
         self.assertNotIn("IS_STATIC_DEMO", app_js)
-        self.assertIn("state.currentResults = data.results || []", app_js)
+        self.assertIn("state.currentResults = normalizeRecommendationItems(data.results)", app_js)
+        self.assertIn('const path = isFollowUp ? "/api/v2/follow-up" : "/api/v2/recommend";', app_js)
+        self.assertIn("function normalizeOffer(raw, index = 0)", app_js)
+        self.assertIn("offer.clickUrl", app_js)
         self.assertIn("item.personalized_reason", app_js)
         self.assertIn("glowpick: text(\"glowpickImage\")", app_js)
         self.assertIn("retailer: text(\"retailerImage\")", app_js)
@@ -426,21 +457,24 @@ class PersonalizedServiceUnitTest(unittest.TestCase):
         self.assertIn("blocked-ingredients", app_js)
         self.assertIn('oliveyoung: "Olive Young"', app_js)
         self.assertIn('official: "브랜드 공식몰"', app_js)
-        self.assertIn("const koreanOfficialMallByBrand = {", app_js)
-        self.assertIn('COSRX: "https://www.cosrx.co.kr/"', app_js)
-        self.assertIn('Anua: "https://www.anua.kr/"', app_js)
-        self.assertIn('"Round Lab": "https://roundlab.co.kr/"', app_js)
-        self.assertIn('function linkButton(product, type, labelKey)', app_js)
-        self.assertIn('function globalOliveYoungUrl(product)', app_js)
-        self.assertIn("https://global.oliveyoung.com/display/search?query=${encodeURIComponent(query)}", app_js)
-        self.assertIn('if (type === "oliveyoung")', app_js)
-        self.assertIn('if (state.lang === "ko") return product.oliveyoung_url || "#";', app_js)
-        self.assertIn('if (type === "official")', app_js)
-        self.assertIn("return koreanOfficialMall(product) || officialUrl(product.official_url);", app_js)
-        self.assertIn("function koreanOfficialMall(product)", app_js)
+        self.assertIn("function backendRedirectUrl(value)", app_js)
+        self.assertIn('parsed.origin !== apiOrigin || !parsed.pathname.startsWith("/r/")', app_js)
+        self.assertIn('href="${escapeHtml(offer.clickUrl)}"', app_js)
+        self.assertIn('rel="nofollow sponsored noreferrer"', app_js)
+        self.assertNotIn("const koreanOfficialMallByBrand = {", app_js)
+        self.assertNotIn("function globalOliveYoungUrl(product)", app_js)
+        self.assertNotIn("function koreanOfficialMall(product)", app_js)
         self.assertNotIn('productLink(product, "buy")', app_js)
-        self.assertGreaterEqual(app_js.count('linkButton(product, "oliveyoung", "oliveyoung")'), 2)
-        self.assertGreaterEqual(app_js.count('linkButton(product, "official", "official")'), 2)
+
+        clear_compare = app_js.split("async function clearCompareSelections()", 1)[1].split(
+            "\nfunction renderRoutine()", 1
+        )[0]
+        reset_session = app_js.split("async function resetSession()", 1)[1].split(
+            "\nfunction renderCatalogs()", 1
+        )[0]
+        self.assertNotIn("privacyConsent", clear_compare)
+        self.assertIn('document.querySelector("#privacyConsent")', reset_session)
+        self.assertIn("privacyConsent.checked = false", reset_session)
 
     def test_bare_betaine_does_not_match_salicylate(self) -> None:
         self.assertIsNone(find_evidence_for_ingredient("Betaine"))
@@ -460,9 +494,9 @@ class PersonalizedServiceUnitTest(unittest.TestCase):
         self.assertIn("anua-heartleaf-77-soothing-toner", signals["liked_products"])
         self.assertIn("toner", signals["liked_categories"])
 
-    def test_safety_exclusions_override_personalization(self) -> None:
+    def test_ingredient_exclusions_override_personalization(self) -> None:
         db = ProductDatabase.from_csv(PRODUCTS_CSV, REVIEWS_CSV)
-        profile = merge_profiles(None, "snail allergy sensitive serum hydration", [])
+        profile = merge_profiles(None, "avoid snail, sensitive serum hydration", [])
         product = db.get("cosrx-advanced-snail-96-mucin-power-essence")
         self.assertIsNotNone(product)
         scored = IngredientHybridRecommender().score_product(
@@ -471,6 +505,7 @@ class PersonalizedServiceUnitTest(unittest.TestCase):
             personalization={"liked_products": {product.id}},
         )
 
+        self.assertIn("snail", profile.avoid_ingredients)
         self.assertLess(scored.score, 0)
         self.assertLess(scored.score_components["penalties"], -50)
 
@@ -514,7 +549,7 @@ class PersonalizedServiceApiTest(unittest.TestCase):
         os.environ["RECOMMEND_RATE_LIMIT_REQUESTS"] = "1000"
         os.environ["RECOMMEND_RATE_LIMIT_WINDOW_SECONDS"] = "60"
         os.environ["CORS_ALLOW_ORIGINS"] = (
-            "https://yeonwo00.github.io,"
+            "https://web.kbeauty.example,"
             "https://k-beauty-agent.apps.tossmini.com,"
             "https://k-beauty-agent.private-apps.tossmini.com"
         )
@@ -529,6 +564,7 @@ class PersonalizedServiceApiTest(unittest.TestCase):
     def test_session_cookie_created_and_reused(self) -> None:
         first = self.client.get("/api/session")
         self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.headers["cache-control"], "no-store")
         cookie = first.cookies.get(self.web.SESSION_COOKIE)
         self.assertTrue(cookie)
 
@@ -560,6 +596,410 @@ class PersonalizedServiceApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_profile_rejects_duplicate_concerns_with_localized_422(self) -> None:
+        response = self.client.post(
+            "/api/v2/recommend",
+            json={
+                "query": "hydrating serum",
+                "use_openai": False,
+                "language": "en",
+                "profile": {
+                    "skin_type": "dry",
+                    "concerns": ["hydration", "hydration"],
+                    "desired_categories": ["serum"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("cannot be selected more than once", response.json()["detail"])
+
+    def test_profile_rejects_more_than_two_additional_concerns(self) -> None:
+        response = self.client.post(
+            "/api/v2/recommend",
+            json={
+                "query": "세럼 추천",
+                "use_openai": False,
+                "language": "ko",
+                "profile": {
+                    "skin_type": "combination",
+                    "primary_concern": "acne",
+                    "concerns": ["hydration", "redness", "texture"],
+                    "desired_categories": ["serum"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("최대 2개", response.json()["detail"])
+
+    def test_profile_rejects_preferred_and_avoid_alias_conflict(self) -> None:
+        response = self.client.post(
+            "/api/v2/recommend",
+            json={
+                "query": "gentle serum",
+                "use_openai": False,
+                "language": "en",
+                "profile": {
+                    "skin_type": "unknown",
+                    "concerns": ["redness"],
+                    "desired_categories": ["serum"],
+                    "preferred_ingredients": ["fragrance"],
+                    "avoid_ingredients": ["parfum"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("overlap: fragrance", response.json()["detail"])
+
+    def test_profile_rejects_evidence_alias_conflict(self) -> None:
+        response = self.client.post(
+            "/api/v2/recommend",
+            json={
+                "query": "gentle serum",
+                "use_openai": False,
+                "language": "en",
+                "profile": {
+                    "skin_type": "unknown",
+                    "concerns": ["redness"],
+                    "desired_categories": ["serum"],
+                    "avoid_ingredients": ["niacinamide"],
+                    "preferred_ingredients": ["nicotinamide"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("overlap: niacinamide", response.json()["detail"])
+
+    def test_structured_custom_avoid_ingredient_is_not_silently_dropped(self) -> None:
+        response = self.client.post(
+            "/api/v2/recommend",
+            json={
+                "query": "acne serum",
+                "use_openai": False,
+                "language": "en",
+                "profile": {
+                    "skin_type": "oily",
+                    "concerns": ["acne"],
+                    "desired_categories": ["serum"],
+                    "avoid_ingredients": ["benzoyl peroxide"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["profile"]["avoid_ingredients"], ["benzoyl peroxide"])
+
+    def test_follow_up_validates_conflict_after_merging_saved_profile(self) -> None:
+        session_id = "miniapp-merged-conflict_123456"
+        headers = {self.web.SESSION_HEADER: session_id}
+        first = self.client.post(
+            "/api/v2/recommend",
+            headers=headers,
+            json={
+                "query": "수분 세럼 추천",
+                "use_openai": False,
+                "privacy_consent": True,
+                "language": "ko",
+                "profile": {
+                    "skin_type": "dry",
+                    "concerns": ["hydration"],
+                    "desired_categories": ["serum"],
+                    "avoid_ingredients": ["niacinamide"],
+                },
+            },
+        )
+        self.assertEqual(first.status_code, 200)
+
+        follow_up = self.client.post(
+            "/api/v2/follow-up",
+            headers=headers,
+            json={
+                "query": "나이아신아마이드 선호로 바꿔줘",
+                "use_openai": False,
+                "privacy_consent": True,
+                "language": "ko",
+                "profile": {
+                    "skin_type": "dry",
+                    "concerns": ["hydration"],
+                    "desired_categories": ["serum"],
+                    "preferred_ingredients": ["niacinamide"],
+                },
+            },
+        )
+
+        self.assertEqual(follow_up.status_code, 422)
+        self.assertIn("선호 성분과 제외 성분이 겹쳐요", follow_up.json()["detail"])
+
+    def test_structured_legacy_sensitive_value_is_normalized_in_response(self) -> None:
+        response = self.client.post(
+            "/api/v2/recommend",
+            json={
+                "query": "hydrating serum",
+                "use_openai": False,
+                "language": "en",
+                "profile": {
+                    "skin_type": "sensitive",
+                    "concerns": ["hydration"],
+                    "desired_categories": ["serum"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["profile"]["skin_type"], "unknown")
+        self.assertEqual(response.json()["profile"]["sensitivity_level"], "frequent")
+
+    def test_public_recommendation_rejects_sensitive_health_text_before_storage(self) -> None:
+        response = self.client.post(
+            "/api/recommend",
+            headers={self.web.SESSION_HEADER: "miniapp-sensitive_1234567890"},
+            json={
+                "query": "임신 중이고 라놀린 알레르기가 있어요",
+                "limit": 3,
+                "use_openai": False,
+                "privacy_consent": True,
+                "language": "ko",
+                "profile": {
+                    "skin_type": "sensitive",
+                    "concerns": ["hydration"],
+                    "desired_categories": ["moisturizer"],
+                    "avoid_ingredients": ["lanolin"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("민감정보", response.json()["detail"])
+        with self.web.store.connect() as connection:
+            stored = connection.execute(
+                "SELECT 1 FROM sessions WHERE session_id = ?",
+                ("miniapp-sensitive_1234567890",),
+            ).fetchone()
+        self.assertIsNone(stored)
+
+    def test_structured_profile_cannot_bypass_sensitive_health_text_block(self) -> None:
+        response = self.client.post(
+            "/api/recommend",
+            headers={self.web.SESSION_HEADER: "miniapp-sensitive-profile_123456"},
+            json={
+                "query": "민감성 피부용 보습제를 추천해줘",
+                "limit": 3,
+                "use_openai": False,
+                "privacy_consent": True,
+                "language": "ko",
+                "profile": {
+                    "skin_type": "sensitive",
+                    "concerns": ["hydration"],
+                    "desired_categories": ["moisturizer"],
+                    "avoid_ingredients": ["임신 중 피해야 하는 성분"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_preferred_ingredient_cannot_bypass_sensitive_health_text_block(self) -> None:
+        for index, sensitive_value in enumerate(("pregnancy medication", "임신 약물")):
+            session_id = f"miniapp-sensitive-preferred-{index}_123456"
+            with self.subTest(sensitive_value=sensitive_value):
+                response = self.client.post(
+                    "/api/recommend",
+                    headers={self.web.SESSION_HEADER: session_id},
+                    json={
+                        "query": "순한 세럼 추천",
+                        "limit": 3,
+                        "use_openai": False,
+                        "privacy_consent": True,
+                        "language": "ko",
+                        "profile": {
+                            "skin_type": "unknown",
+                            "concerns": ["hydration"],
+                            "desired_categories": ["serum"],
+                            "preferred_ingredients": [sensitive_value],
+                        },
+                    },
+                )
+
+                self.assertEqual(response.status_code, 422)
+                with self.web.store.connect() as connection:
+                    stored = connection.execute(
+                        "SELECT 1 FROM sessions WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                self.assertIsNone(stored)
+
+    def test_contact_or_note_text_is_rejected_before_profile_storage(self) -> None:
+        for index, value in enumerate((
+            "younghan@example.com",
+            "010-1234-5678",
+            "https://example.com/private-note",
+            "private niacinamide note",
+            "this is a long private note that is not an ingredient name",
+        )):
+            session_id = f"miniapp-private-note-{index}_123456"
+            with self.subTest(value=value):
+                response = self.client.post(
+                    "/api/recommend",
+                    headers={self.web.SESSION_HEADER: session_id},
+                    json={
+                        "query": "순한 세럼 추천",
+                        "use_openai": False,
+                        "privacy_consent": True,
+                        "language": "ko",
+                        "profile": {
+                            "skin_type": "unknown",
+                            "concerns": ["hydration"],
+                            "desired_categories": ["serum"],
+                            "preferred_ingredients": [value],
+                        },
+                    },
+                )
+
+                self.assertEqual(response.status_code, 422)
+                with self.web.store.connect() as connection:
+                    stored = connection.execute(
+                        "SELECT 1 FROM sessions WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                self.assertIsNone(stored)
+
+    def test_public_recommendation_persists_only_controlled_profile_not_raw_query(self) -> None:
+        session_id = "miniapp-controlled-profile_123456"
+        raw_query = "지성 피부 세럼 추천, 향료는 빼고 개인 메모 codename-orchid"
+        response = self.client.post(
+            "/api/recommend",
+            headers={self.web.SESSION_HEADER: session_id},
+            json={
+                "query": raw_query,
+                "limit": 3,
+                "use_openai": False,
+                "privacy_consent": True,
+                "language": "ko",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        with self.web.store.connect() as connection:
+            stored_query = connection.execute(
+                "SELECT query FROM recommendations WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()["query"]
+            stored_profile = json.loads(
+                connection.execute(
+                    "SELECT profile_json FROM sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()["profile_json"]
+            )
+        self.assertNotIn("codename-orchid", stored_query)
+        self.assertIn("controlled_profile", stored_query)
+        self.assertNotIn("allergies", stored_profile)
+        self.assertNotIn("pregnant_or_nursing", stored_profile)
+
+    def test_one_time_recommendation_writes_no_session_or_behavior_rows(self) -> None:
+        tables = (
+            "sessions",
+            "privacy_consents",
+            "conversation_turns",
+            "recommendations",
+            "feedback",
+            "openai_calls",
+            "app_events",
+            "selections",
+        )
+        with self.web.store.connect() as connection:
+            before = {
+                table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in tables
+            }
+
+        response = self.client.post(
+            "/api/v2/recommend",
+            headers={self.web.SESSION_HEADER: "miniapp-one-time_1234567890"},
+            json={
+                "query": "수분 세럼 추천",
+                "use_openai": False,
+                "privacy_consent": False,
+                "language": "ko",
+                "profile": {
+                    "skin_type": "dry",
+                    "concerns": ["hydration"],
+                    "desired_categories": ["serum"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["recommendation_id"])
+        self.assertFalse(response.json()["privacy"]["stored"])
+        with self.web.store.connect() as connection:
+            after = {
+                table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in tables
+            }
+        self.assertEqual(after, before)
+
+    def test_feedback_rejects_free_text_comment_field(self) -> None:
+        response = self.client.post(
+            "/api/feedback",
+            json={
+                "recommendation_id": 1,
+                "target": "result",
+                "feedback": "liked",
+                "comment": "free text must not be accepted",
+            },
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_feedback_rejects_unbounded_or_unexposed_product_ids(self) -> None:
+        too_long = self.client.post(
+            "/api/feedback",
+            json={
+                "recommendation_id": 1,
+                "target": "product",
+                "product_id": "x" * 161,
+                "feedback": "liked",
+            },
+        )
+        self.assertEqual(too_long.status_code, 422)
+
+        recommendation = self.client.post(
+            "/api/recommend",
+            json={
+                "query": "건성 피부 수분 세럼 추천",
+                "limit": 1,
+                "use_openai": False,
+                "privacy_consent": True,
+                "language": "ko",
+            },
+        )
+        self.assertEqual(recommendation.status_code, 200)
+        data = recommendation.json()
+        exposed_ids = {
+            item["product"]["id"]
+            for item in data["results"]
+        }
+        exposed_ids.update(
+            product["id"]
+            for item in data["results"]
+            for product in item.get("similar_products", [])
+        )
+        unexposed_id = next(product.id for product in self.web.agent.database.products if product.id not in exposed_ids)
+
+        response = self.client.post(
+            "/api/feedback",
+            json={
+                "recommendation_id": data["recommendation_id"],
+                "target": "product",
+                "product_id": unexposed_id,
+                "feedback": "liked",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("referenced recommendation", response.json()["detail"])
+
     def test_apps_in_toss_header_takes_priority_and_isolates_profiles(self) -> None:
         cookie_session = self.client.get("/api/session")
         self.assertEqual(cookie_session.status_code, 200)
@@ -572,6 +1012,7 @@ class PersonalizedServiceApiTest(unittest.TestCase):
                 "query": "이 문장은 구조화 입력보다 우선하면 안 됩니다",
                 "limit": 3,
                 "use_openai": False,
+                "privacy_consent": True,
                 "language": "ko",
                 "profile": {
                     "skin_type": "dry",
@@ -603,6 +1044,7 @@ class PersonalizedServiceApiTest(unittest.TestCase):
                 ),
                 "limit": 5,
                 "use_openai": False,
+                "privacy_consent": True,
                 "language": "ko",
                 "profile": {
                     "skin_type": "normal",
@@ -642,6 +1084,7 @@ class PersonalizedServiceApiTest(unittest.TestCase):
             "query": "지성 피부 토너 추천",
             "limit": 1,
             "use_openai": False,
+            "privacy_consent": True,
             "language": "ko",
         }
         headers = {self.web.SESSION_HEADER: "miniapp-rate-limit_1234567890"}
@@ -668,7 +1111,7 @@ class PersonalizedServiceApiTest(unittest.TestCase):
 
         self.assertIn("secure", response.headers["set-cookie"].lower())
 
-    def test_cross_origin_cookie_and_cors_for_github_pages(self) -> None:
+    def test_cross_origin_cookie_and_cors_for_explicit_dedicated_web_origin(self) -> None:
         os.environ["SECURE_COOKIES"] = "true"
         os.environ["COOKIE_SAMESITE"] = "none"
         self.web = importlib.reload(self.web)
@@ -683,14 +1126,14 @@ class PersonalizedServiceApiTest(unittest.TestCase):
         preflight = client.options(
             "/api/recommend",
             headers={
-                "Origin": "https://yeonwo00.github.io",
+                "Origin": "https://web.kbeauty.example",
                 "Access-Control-Request-Method": "POST",
                 "Access-Control-Request-Headers": "content-type",
             },
         )
         self.assertEqual(preflight.status_code, 200)
-        self.assertEqual(preflight.headers["access-control-allow-origin"], "https://yeonwo00.github.io")
-        self.assertEqual(preflight.headers["access-control-allow-credentials"], "true")
+        self.assertEqual(preflight.headers["access-control-allow-origin"], "https://web.kbeauty.example")
+        self.assertNotIn("access-control-allow-credentials", preflight.headers)
 
         toss_preflight = client.options(
             "/api/recommend",
@@ -709,7 +1152,12 @@ class PersonalizedServiceApiTest(unittest.TestCase):
     def test_recommend_followup_feedback_and_openai_fallback(self) -> None:
         response = self.client.post(
             "/api/recommend",
-            json={"query": "지성 피부에 맞는 기초 제품을 추천해줘", "limit": 3, "use_openai": True},
+            json={
+                "query": "지성 피부에 맞는 기초 제품을 추천해줘",
+                "limit": 3,
+                "use_openai": True,
+                "privacy_consent": True,
+            },
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -732,7 +1180,12 @@ class PersonalizedServiceApiTest(unittest.TestCase):
 
         follow_up = self.client.post(
             "/api/follow-up",
-            json={"query": "make it gentler and fragrance-free", "limit": 3, "use_openai": False},
+            json={
+                "query": "make it gentler and fragrance-free",
+                "limit": 3,
+                "use_openai": False,
+                "privacy_consent": True,
+            },
         )
         self.assertEqual(follow_up.status_code, 200)
         self.assertIn("oil_control", follow_up.text)
@@ -740,7 +1193,12 @@ class PersonalizedServiceApiTest(unittest.TestCase):
     def test_profile_reset_keeps_session_but_clears_search_criteria(self) -> None:
         response = self.client.post(
             "/api/recommend",
-            json={"query": "지성 피부 선크림 3만원 이하 추천", "limit": 3, "use_openai": False},
+            json={
+                "query": "지성 피부 선크림 3만원 이하 추천",
+                "limit": 3,
+                "use_openai": False,
+                "privacy_consent": True,
+            },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["profile"]["skin_type"], "oily")
@@ -754,6 +1212,18 @@ class PersonalizedServiceApiTest(unittest.TestCase):
         self.assertEqual(session.json()["profile"], {})
 
     def test_selection_api_tracks_saved_compare_and_total_cost(self) -> None:
+        consent = self.client.post(
+            "/api/recommend",
+            json={
+                "query": "선크림 추천",
+                "limit": 1,
+                "use_openai": False,
+                "privacy_consent": True,
+                "language": "ko",
+            },
+        )
+        self.assertEqual(consent.status_code, 200)
+
         response = self.client.post(
             "/api/selections",
             json={
@@ -765,7 +1235,8 @@ class PersonalizedServiceApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["saved_ids"], ["beauty-of-joseon-relief-sun-rice-probiotics"])
-        self.assertEqual(data["total_cost_krw"], 18000)
+        self.assertEqual(data["total_cost_krw"], 0)
+        self.assertEqual(data["missing_price_ids"], ["beauty-of-joseon-relief-sun-rice-probiotics"])
 
         compare = self.client.post(
             "/api/selections",
@@ -796,6 +1267,7 @@ class PersonalizedServiceApiTest(unittest.TestCase):
                 "query": "지성 피부에 맞는 기초 제품을 추천해줘",
                 "limit": 2,
                 "use_openai": False,
+                "privacy_consent": True,
                 "language": "ko",
             },
         )
@@ -816,6 +1288,7 @@ class PersonalizedServiceApiTest(unittest.TestCase):
                 "query": "oily skin sunscreen for oil control",
                 "limit": 2,
                 "use_openai": False,
+                "privacy_consent": True,
                 "language": "en",
             },
         )
@@ -832,9 +1305,11 @@ class PersonalizedServiceApiTest(unittest.TestCase):
     def test_admin_endpoints_are_protected(self) -> None:
         unauthorized = self.client.get("/api/admin/metrics")
         self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(unauthorized.headers["cache-control"], "no-store")
 
         authorized = self.client.get("/api/admin/metrics", headers={"x-admin-token": "test-admin-token"})
         self.assertEqual(authorized.status_code, 200)
+        self.assertEqual(authorized.headers["cache-control"], "no-store")
         self.assertIn("total_sessions", authorized.json())
 
     def test_compare_and_routine_pages_are_served(self) -> None:

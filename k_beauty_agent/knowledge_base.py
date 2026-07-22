@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .models import EvidenceLevel, IngredientEvidence
 
 EVIDENCE_WEIGHT: dict[EvidenceLevel, float] = {
@@ -108,7 +110,7 @@ INGREDIENT_EVIDENCE: tuple[IngredientEvidence, ...] = (
     ),
     IngredientEvidence(
         name="zinc pca",
-        aliases=("zinc",),
+        aliases=(),
         supports=("oil_control", "acne"),
         suitable_for=("oily", "combination"),
         cautions=("Can feel drying for already dry skin.",),
@@ -145,7 +147,90 @@ def find_evidence_for_ingredient(ingredient: str) -> IngredientEvidence | None:
     index = evidence_by_alias()
     if normalized in index:
         return index[normalized]
-    for alias, evidence in index.items():
-        if alias in normalized:
+    for alias, evidence in sorted(index.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", normalized):
             return evidence
     return None
+
+
+_VOLATILE_ALCOHOL_REQUESTS = {
+    "alcohol",
+    "ethanol",
+    "alcohol denat",
+    "alcohol denat.",
+    "denatured alcohol",
+    "ethyl alcohol",
+}
+_VOLATILE_ALCOHOL_MARKERS = (
+    "ethanol",
+    "alcohol denat",
+    "denatured alcohol",
+    "ethyl alcohol",
+)
+_FATTY_ALCOHOL_MARKERS = (
+    "cetearyl alcohol",
+    "cetyl alcohol",
+    "stearyl alcohol",
+    "behenyl alcohol",
+    "arachidyl alcohol",
+)
+
+
+def _contains_ingredient_phrase(haystack: str, needle: str) -> bool:
+    """Match an ingredient phrase on letter/number boundaries."""
+
+    return bool(
+        re.search(
+            rf"(?<![0-9a-z가-힣]){re.escape(needle)}(?![0-9a-z가-힣])",
+            haystack,
+        )
+    )
+
+
+def canonical_ingredient_key(value: str) -> str:
+    """Return a stable key for preference conflict checks.
+
+    Evidence aliases such as ``nicotinamide`` and ``niacinamide`` collapse to
+    the same ingredient. Volatile-alcohol spellings also collapse together,
+    while fatty and benzyl alcohols remain distinct so they are not blocked by
+    a user's ethanol preference.
+    """
+
+    normalized = normalize_token(value).strip(" .")
+    if any(_contains_ingredient_phrase(normalized, marker) for marker in _FATTY_ALCOHOL_MARKERS) or _contains_ingredient_phrase(
+        normalized, "benzyl alcohol"
+    ):
+        return normalized
+    if normalized in _VOLATILE_ALCOHOL_REQUESTS or any(
+        _contains_ingredient_phrase(normalized, marker) for marker in _VOLATILE_ALCOHOL_MARKERS
+    ):
+        return "alcohol"
+    evidence = find_evidence_for_ingredient(normalized)
+    return evidence.name if evidence else normalized
+
+
+def ingredient_name_matches(requested: str, candidate: str) -> bool:
+    """Match ingredient aliases without treating fatty alcohols as ethanol.
+
+    Public survey copy uses ``alcohol`` to mean volatile ethanol/denatured
+    alcohol. A raw substring comparison would incorrectly block common fatty
+    alcohol emollients such as cetearyl alcohol.
+    """
+
+    wanted = normalize_token(requested).strip(" .")
+    ingredient = normalize_token(candidate).strip(" .")
+    if wanted in _VOLATILE_ALCOHOL_REQUESTS:
+        if any(_contains_ingredient_phrase(ingredient, marker) for marker in _FATTY_ALCOHOL_MARKERS):
+            return False
+        return ingredient == "alcohol" or any(
+            _contains_ingredient_phrase(ingredient, marker) for marker in _VOLATILE_ALCOHOL_MARKERS
+        )
+
+    wanted_evidence = find_evidence_for_ingredient(wanted)
+    ingredient_evidence = find_evidence_for_ingredient(ingredient)
+    if wanted_evidence and ingredient_evidence:
+        return wanted_evidence.name == ingredient_evidence.name
+    # For unregistered ingredients, only match the user's complete requested
+    # phrase inside a catalog ingredient. Reverse containment would make a
+    # qualified request such as "rose water" match the ubiquitous "water".
+    return _contains_ingredient_phrase(ingredient, wanted)

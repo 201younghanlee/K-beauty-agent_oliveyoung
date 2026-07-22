@@ -46,6 +46,7 @@ class Product:
     positive_reviews_en: tuple[str, ...] = ()
     negative_reviews_en: tuple[str, ...] = ()
     review_source_url: str | None = None
+    review_verified_at: str | None = None
     image_url: str | None = None
     image_verified_source: str | None = None
     image_source_type: str = "none"
@@ -56,6 +57,18 @@ class Product:
     official_url: str | None = None
     texture_tags: tuple[str, ...] = ()
     oliveyoung_verified_at: str | None = None
+    catalog_source: str = "curated"
+    source_product_id: str | None = None
+    purchase_url: str | None = None
+    retailer_name: str | None = None
+    price_krw: int | None = None
+    price_checked_at: str | None = None
+    source_updated_at: str | None = None
+    fetched_at: str | None = None
+    ingredient_status: str = "complete"
+    recommendation_tier: str = "verified"
+    data_license: str | None = None
+    data_attribution_url: str | None = None
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "Product":
@@ -67,6 +80,9 @@ class Product:
                 return tuple(item.strip() for item in value.replace(";", "|").split("|") if item.strip())
             return tuple(str(item).strip() for item in value if str(item).strip())
 
+        catalog_source = str(data.get("catalog_source") or "curated")
+        ingredients = tup("ingredients")
+
         return cls(
             id=str(data["id"]),
             name=str(data["name"]),
@@ -74,7 +90,7 @@ class Product:
             brand=str(data.get("brand", "Unknown")),
             category=str(data.get("category", "unknown")),
             country=str(data.get("country", "Korea")),
-            ingredients=tup("ingredients"),
+            ingredients=ingredients,
             claims=tup("claims"),
             suited_skin_types=tup("suited_skin_types"),
             concerns=tup("concerns"),
@@ -94,6 +110,7 @@ class Product:
             positive_reviews_en=tup("positive_reviews_en"),
             negative_reviews_en=tup("negative_reviews_en"),
             review_source_url=str(data["review_source_url"]) if data.get("review_source_url") else None,
+            review_verified_at=str(data["review_verified_at"]) if data.get("review_verified_at") else None,
             image_url=str(data["image_url"]) if data.get("image_url") else None,
             image_verified_source=str(data["image_verified_source"]) if data.get("image_verified_source") else None,
             image_source_type=str(data["image_source_type"]) if data.get("image_source_type") else "none",
@@ -101,15 +118,58 @@ class Product:
             image_view_type=str(data["image_view_type"]) if data.get("image_view_type") else "none",
             oliveyoung_url=str(data["oliveyoung_url"]) if data.get("oliveyoung_url") else None,
             oliveyoung_price_krw=int(float(data["oliveyoung_price_krw"])) if data.get("oliveyoung_price_krw") is not None else None,
-            official_url=str(data["official_url"]) if data.get("official_url") else str(data["source_url"]) if data.get("source_url") else None,
+            official_url=(
+                str(data["official_url"])
+                if data.get("official_url")
+                else str(data["source_url"])
+                if data.get("source_url") and str(data.get("catalog_source") or "curated") == "curated"
+                else None
+            ),
             texture_tags=tup("texture_tags"),
             oliveyoung_verified_at=str(data["oliveyoung_verified_at"]) if data.get("oliveyoung_verified_at") else None,
+            catalog_source=catalog_source,
+            source_product_id=str(data["source_product_id"]) if data.get("source_product_id") else None,
+            purchase_url=(
+                str(data["purchase_url"])
+                if data.get("purchase_url")
+                else str(data["oliveyoung_url"])
+                if data.get("oliveyoung_url")
+                else None
+            ),
+            retailer_name=(
+                str(data["retailer_name"])
+                if data.get("retailer_name")
+                else "Olive Young"
+                if data.get("oliveyoung_url")
+                else None
+            ),
+            price_krw=(
+                int(float(data["price_krw"]))
+                if data.get("price_krw") is not None
+                else int(float(data["oliveyoung_price_krw"]))
+                if data.get("oliveyoung_price_krw") is not None
+                else None
+            ),
+            price_checked_at=str(data["price_checked_at"]) if data.get("price_checked_at") else None,
+            source_updated_at=str(data["source_updated_at"]) if data.get("source_updated_at") else None,
+            fetched_at=str(data["fetched_at"]) if data.get("fetched_at") else None,
+            ingredient_status=str(
+                data.get("ingredient_status")
+                or ("complete" if catalog_source == "curated" and ingredients else "missing")
+            ),
+            recommendation_tier=str(
+                data.get("recommendation_tier") or ("verified" if catalog_source == "curated" else "discovery")
+            ),
+            data_license=str(data["data_license"]) if data.get("data_license") else None,
+            data_attribution_url=str(data["data_attribution_url"]) if data.get("data_attribution_url") else None,
         )
 
 
 @dataclass
 class SkinProfile:
     skin_type: str | None = None
+    sensitivity_level: str | None = None
+    primary_concern: str | None = None
     concerns: list[str] = field(default_factory=list)
     desired_categories: list[str] = field(default_factory=list)
     preferred_ingredients: list[str] = field(default_factory=list)
@@ -121,6 +181,7 @@ class SkinProfile:
     min_price_usd: float | None = None
     min_price_krw: int | None = None
     texture_preference: str | None = None
+    finish_preference: str | None = None
     location_or_climate: str | None = None
     pregnant_or_nursing: bool | None = None
     uncertainty: list[str] = field(default_factory=list)
@@ -130,6 +191,7 @@ class SkinProfile:
     def has_minimum_signal(self) -> bool:
         return bool(
             self.skin_type
+            or self.primary_concern
             or self.concerns
             or self.desired_categories
             or self.max_price_usd is not None

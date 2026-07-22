@@ -6,7 +6,7 @@ from .database import ProductDatabase
 from .llm import HybridExplainer, LLMClient
 from .models import Recommendation
 from .personalization import merge_profiles, profile_from_dict
-from .recommender import IngredientHybridRecommender
+from .recommender import IngredientHybridRecommender, needs_complete_ingredient_data
 from .reviews import summarize_reviews
 from .serializers import similarity_score
 from .skin import analyze_skin_query
@@ -18,8 +18,6 @@ DEFAULT_GUARDRAILS = [
     "Brand diversity is applied after scoring to reduce brand bias.",
     "This is cosmetic guidance, not medical diagnosis or treatment.",
 ]
-
-
 class KBeautyAgent:
     def __init__(self, database: ProductDatabase, llm_client: LLMClient | None = None):
         self.database = database
@@ -57,11 +55,13 @@ class KBeautyAgent:
     ) -> Recommendation:
         if structured_profile is not None:
             profile = profile_from_dict(structured_profile)
+            profile_concerns = _ordered_concerns(profile)
             search_query = " ".join(
-                [*profile.desired_categories, *profile.concerns, *profile.preferred_ingredients]
+                [*profile.desired_categories, *profile_concerns]
             )
         else:
             profile = merge_profiles(stored_profile, query, recent_queries) if stored_profile or recent_queries else analyze_skin_query(query)
+            profile_concerns = _ordered_concerns(profile)
             search_query = query
         if not profile.has_minimum_signal:
             return Recommendation(
@@ -74,12 +74,14 @@ class KBeautyAgent:
         candidates = self.database.search(
             search_query,
             categories=profile.desired_categories,
-            concerns=profile.concerns,
-            ingredients=profile.preferred_ingredients,
-            limit=max(50, len(self.database.products)),
+            concerns=profile_concerns,
+            ingredients=None,
+            exclude_ingredients=[*profile.avoid_ingredients, *profile.allergies],
+            require_complete_ingredients=needs_complete_ingredient_data(profile),
+            limit=None,
         )
         if not candidates:
-            candidates = list(self.database.products)
+            candidates = self.database.search(limit=None)
         scored = self.recommender.score_products(candidates, profile, personalization=personalization)
         top = scored[:limit]
         broadened = False
@@ -87,9 +89,11 @@ class KBeautyAgent:
         if not top and profile.desired_categories:
             broad_candidates = self.database.search(
                 search_query,
-                concerns=profile.concerns,
-                ingredients=profile.preferred_ingredients,
-                limit=max(50, len(self.database.products)),
+                concerns=profile_concerns,
+                ingredients=None,
+                exclude_ingredients=[*profile.avoid_ingredients, *profile.allergies],
+                require_complete_ingredients=needs_complete_ingredient_data(profile),
+                limit=None,
             )
             scored = self.recommender.score_products(broad_candidates, profile, personalization=personalization)
             top = scored[:limit]
@@ -98,7 +102,7 @@ class KBeautyAgent:
         if not top:
             profile.follow_up_questions.extend(
                 [
-                    "Can you share any allergies or ingredients you must avoid?",
+                    "Which cosmetic ingredient names, if any, do you prefer to avoid?",
                     "Are you looking for cleanser, toner, serum, moisturizer, sunscreen, or a full basic routine?",
                 ]
             )
@@ -122,7 +126,7 @@ class KBeautyAgent:
             profile=profile,
             results=top,
             fallback_message=(
-                "No safe exact-category match was found after applying allergy filters, so I broadened the product search."
+                "No safe exact-category match was found after applying ingredient filters, so I broadened the product search."
                 if broadened
                 else None
             ),
@@ -131,11 +135,19 @@ class KBeautyAgent:
         )
 
     def similar_products(self, product, profile, *, limit: int = 5):
-        safe_scores = self.recommender.score_products(self.database.products, profile)
+        similar_candidates = self.database.search(
+            categories=[product.category],
+            concerns=_ordered_concerns(profile),
+            ingredients=None,
+            exclude_ingredients=[*profile.avoid_ingredients, *profile.allergies],
+            require_complete_ingredients=needs_complete_ingredient_data(profile),
+            limit=None,
+        )
+        safe_scores = self.recommender.score_products(similar_candidates, profile)
         safe_ids = {item.product.id for item in safe_scores}
         candidates = [
             candidate
-            for candidate in self.database.products
+            for candidate in similar_candidates
             if candidate.id != product.id and candidate.id in safe_ids
         ]
         scored = [(similarity_score(product, candidate), candidate) for candidate in candidates]
@@ -152,3 +164,11 @@ class KBeautyAgent:
                 selected.append(candidate)
                 seen_brands.add(brand)
         return (selected + delayed)[:limit]
+
+
+def _ordered_concerns(profile) -> list[str]:
+    ordered: list[str] = []
+    for concern in [profile.primary_concern, *profile.concerns]:
+        if concern and concern not in ordered:
+            ordered.append(concern)
+    return ordered

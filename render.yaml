@@ -3,7 +3,7 @@ services:
     name: k-beauty-recommendation-agent
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt -c requirements.lock
     startCommand: uvicorn k_beauty_agent.web:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
@@ -15,18 +15,20 @@ services:
         value: gpt-5.4-mini
       - key: PUBLIC_LLM_ENABLED
         value: "false"
-      - key: FOLLOW_UP_LLM_ENABLED
-        value: "false"
       - key: PRODUCT_REASON_LLM_ENABLED
         value: "false"
       - key: ADMIN_TOKEN
         generateValue: true
       - key: SESSION_SECRET
         generateValue: true
+      - key: AFFILIATE_REDIRECT_SECRET
+        generateValue: true
+      - key: AFFILIATE_WEBHOOK_SECRET
+        generateValue: true
       - key: CORS_ALLOW_ORIGINS
-        value: https://yeonwo00.github.io,https://201younghanlee.github.io,https://k-beauty-agent.apps.tossmini.com,https://k-beauty-agent.private-apps.tossmini.com
+        value: https://k-beauty-agent.apps.tossmini.com,https://k-beauty-agent.private-apps.tossmini.com
       - key: COOKIE_SAMESITE
-        value: none
+        value: lax
       - key: SECURE_COOKIES
         value: "true"
       - key: RECOMMEND_RATE_LIMIT_REQUESTS
@@ -36,7 +38,7 @@ services:
       - key: DATABASE_URL
         value: sqlite:////tmp/k_beauty_agent.sqlite3
       - key: PRODUCT_SOURCE
-        value: curated
+        value: catalog_snapshot
       - key: EXTERNAL_CACHE_URL
         value: sqlite:////tmp/external_product_cache.sqlite3
       - key: KRW_PER_USD
@@ -49,3 +51,11 @@ services:
         value: https://world.openbeautyfacts.org/cgi/search.pl
       - key: COSING_API_URL
         value: https://ec.europa.eu/growth/tools-databases/cosing/api/ingredients
+      - key: PARTNER_FEEDS_JSON
+        sync: false
+      - key: ACTIVE_AFFILIATE_SOURCE_IDS
+        sync: false
+      - key: COUPANG_PARTNERS_ACCESS_KEY
+        sync: false
+      - key: COUPANG_PARTNERS_SECRET_KEY
+        sync: false

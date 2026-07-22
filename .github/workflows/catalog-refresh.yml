@@ -1,0 +1,107 @@
+name: Refresh product catalog
+
+on:
+  schedule:
+    - cron: "35 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: open-beauty-facts-catalog-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.9.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: miniapp/pnpm-lock.yaml
+
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt -c requirements.lock
+
+      - name: Stream and validate the Open Beauty Facts export
+        run: |
+          python scripts/refresh_catalog.py \
+            --min-products 100 \
+            --max-drop-ratio 0.25 \
+            --max-duplicate-ratio 0.05 \
+            --max-malformed-ratio 0.001
+
+      - name: Run repository tests against the refreshed snapshot
+        run: python -m pytest -q
+
+      - name: Install Mini App dependencies
+        working-directory: miniapp
+        run: pnpm install --frozen-lockfile
+
+      - name: Test and build the Mini App
+        working-directory: miniapp
+        run: |
+          pnpm run test
+          pnpm run typecheck
+          pnpm run build
+
+      - name: Detect catalog changes
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="automation/open-beauty-facts-catalog"
+          git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch" || true
+          if git diff --quiet -- data/catalog_generated.csv data/catalog_manifest.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            open_pr="$(gh pr list --state open --head "$branch" --json number --jq '.[0].number')"
+            if git rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null \
+              && git diff --quiet "refs/remotes/origin/$branch" -- data/catalog_generated.csv data/catalog_manifest.json \
+              && [[ -n "$open_pr" ]]; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Open or update the catalog refresh pull request
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="automation/open-beauty-facts-catalog"
+          title="data: refresh Open Beauty Facts catalog"
+          body=$'Automated daily refresh of the eligible skincare catalog from the official Open Beauty Facts JSONL export.\n\nThe workflow streamed the dump, applied the catalog safety thresholds, ran the Python suite, and tested, type-checked, and built the Apps in Toss Mini App. This workflow does not merge the pull request automatically.\n\nAttribution: Open Beauty Facts database data is licensed under ODbL 1.0; product images are licensed under CC BY-SA 3.0.'
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$branch"
+          git add data/catalog_generated.csv data/catalog_manifest.json
+          git commit -m "data: refresh Open Beauty Facts catalog"
+          git push --force-with-lease origin "HEAD:$branch"
+
+          existing_url="$(gh pr list --state open --head "$branch" --json url --jq '.[0].url')"
+          if [[ -n "$existing_url" ]]; then
+            gh pr edit "$existing_url" --title "$title" --body "$body"
+          else
+            gh pr create --base main --head "$branch" --title "$title" --body "$body"
+          fi

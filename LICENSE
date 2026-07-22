@@ -19,3 +19,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Third-party data notice: this MIT License applies to the repository software
+and does not replace licenses attached to third-party data or images. The
+generated Open Beauty Facts database snapshot is subject to ODbL 1.0, and its
+product images are subject to CC BY-SA 3.0. See data/README.md and
+data/catalog_manifest.json for attribution and license details.

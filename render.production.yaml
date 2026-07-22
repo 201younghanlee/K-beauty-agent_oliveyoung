@@ -1,0 +1,69 @@
+# Production durability upgrade profile. It uses the same service name as
+# render.yaml and can therefore upgrade the existing service to a paid plan and
+# change its data mount; it does not guarantee creation of a separate service.
+# Back up/export first and review current Render pricing before applying it.
+services:
+  - type: web
+    name: k-beauty-recommendation-agent
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt -c requirements.lock
+    startCommand: uvicorn k_beauty_agent.web:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    disk:
+      name: k-beauty-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.11
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.4-mini
+      - key: PUBLIC_LLM_ENABLED
+        value: "false"
+      - key: PRODUCT_REASON_LLM_ENABLED
+        value: "false"
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: AFFILIATE_REDIRECT_SECRET
+        generateValue: true
+      - key: AFFILIATE_WEBHOOK_SECRET
+        generateValue: true
+      - key: CORS_ALLOW_ORIGINS
+        value: https://k-beauty-agent.apps.tossmini.com,https://k-beauty-agent.private-apps.tossmini.com
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: SECURE_COOKIES
+        value: "true"
+      - key: RECOMMEND_RATE_LIMIT_REQUESTS
+        value: "30"
+      - key: RECOMMEND_RATE_LIMIT_WINDOW_SECONDS
+        value: "60"
+      - key: DATABASE_URL
+        value: sqlite:////var/data/k_beauty_agent.sqlite3
+      - key: EXTERNAL_CACHE_URL
+        value: sqlite:////var/data/external_product_cache.sqlite3
+      - key: PRODUCT_SOURCE
+        value: catalog_snapshot
+      - key: KRW_PER_USD
+        value: "1350"
+      - key: OLIVEYOUNG_SNAPSHOT_CSV
+        value: data/oliveyoung_snapshot.csv
+      - key: OLIVEYOUNG_SNAPSHOT_HTML_DIR
+        value: data/oliveyoung_snapshots
+      - key: OPEN_BEAUTY_FACTS_API_URL
+        value: https://world.openbeautyfacts.org/cgi/search.pl
+      - key: COSING_API_URL
+        value: https://ec.europa.eu/growth/tools-databases/cosing/api/ingredients
+      - key: PARTNER_FEEDS_JSON
+        sync: false
+      - key: ACTIVE_AFFILIATE_SOURCE_IDS
+        sync: false
+      - key: COUPANG_PARTNERS_ACCESS_KEY
+        sync: false
+      - key: COUPANG_PARTNERS_SECRET_KEY
+        sync: false
