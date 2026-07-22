@@ -132,6 +132,14 @@ class SQLiteStore:
                     migration_id TEXT PRIMARY KEY,
                     applied_at INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS external_api_daily_usage (
+                    service TEXT NOT NULL,
+                    quota_day TEXT NOT NULL,
+                    calls INTEGER NOT NULL DEFAULT 0,
+                    exhausted INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (service, quota_day)
+                );
 
                 -- Commerce v2 keeps the recommendation product master separate
                 -- from retailer-specific availability and monetisation data.
@@ -658,6 +666,53 @@ class SQLiteStore:
                 (PUBLIC_PROFILE_MINIMIZATION_MIGRATION, _now()),
             )
         return changed
+
+    def reserve_external_api_daily_call(self, service: str, quota_day: str, limit: int) -> bool:
+        """Atomically reserve one external-API call across app workers.
+
+        The day string is supplied by the API-specific service because external
+        providers can reset quotas in a timezone other than the server's.
+        """
+
+        safe_limit = max(1, int(limit))
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT calls, exhausted FROM external_api_daily_usage "
+                "WHERE service = ? AND quota_day = ?",
+                (service, quota_day),
+            ).fetchone()
+            if row is not None and (bool(row["exhausted"]) or int(row["calls"]) >= safe_limit):
+                return False
+            connection.execute(
+                """
+                INSERT INTO external_api_daily_usage(service, quota_day, calls, exhausted, updated_at)
+                VALUES (?, ?, 1, 0, ?)
+                ON CONFLICT(service, quota_day) DO UPDATE SET
+                    calls = external_api_daily_usage.calls + 1,
+                    updated_at = excluded.updated_at
+                """,
+                (service, quota_day, _now()),
+            )
+        return True
+
+    def exhaust_external_api_daily_quota(self, service: str, quota_day: str, limit: int) -> None:
+        """Persist an upstream quota exhaustion circuit breaker for the day."""
+
+        safe_limit = max(1, int(limit))
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                INSERT INTO external_api_daily_usage(service, quota_day, calls, exhausted, updated_at)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(service, quota_day) DO UPDATE SET
+                    calls = MAX(external_api_daily_usage.calls, excluded.calls),
+                    exhausted = 1,
+                    updated_at = excluded.updated_at
+                """,
+                (service, quota_day, safe_limit, _now()),
+            )
 
     def cleanup_expired(self, retention_days: int = RETENTION_DAYS) -> int:
         now = _now()

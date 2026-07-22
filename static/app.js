@@ -1070,7 +1070,7 @@ async function submitRecommendation(isFollowUp, query) {
         use_openai: false,
         language: state.lang,
         privacy_consent: Boolean(document.querySelector("#privacyConsent")?.checked),
-        privacy_policy_version: "2026-07-20",
+        privacy_policy_version: "2026-07-22",
       }),
     };
     const path = isFollowUp ? "/api/v2/follow-up" : "/api/v2/recommend";

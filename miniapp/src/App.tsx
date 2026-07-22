@@ -5,7 +5,9 @@ import {
   ingredientSelectionConflicts,
   privacyPolicyUrl,
   requestProductOffers,
+  requestProductVideoReviews,
   requestRecommendations,
+  termsOfUseUrl,
 } from './api';
 import { openExternalUrl } from './external';
 import { deleteUserData } from './privacy';
@@ -14,6 +16,7 @@ import { routeAnnouncement, type AppScreen } from './accessibility';
 import type {
   Product,
   ProductExternalLink,
+  ProductVideoReviews,
   RecommendationItem,
   RecommendationResult,
   RetailOffer,
@@ -31,6 +34,9 @@ const SKIN_QUESTION_TITLE_ID = 'skin-question-title';
 const SENSITIVITY_QUESTION_TITLE_ID = 'sensitivity-question-title';
 const CATEGORY_QUESTION_TITLE_ID = 'category-question-title';
 const PRIMARY_CONCERN_TITLE_ID = 'primary-concern-title';
+const YOUTUBE_HOME_URL = 'https://www.youtube.com/';
+const YOUTUBE_TERMS_URL = 'https://www.youtube.com/t/terms';
+const GOOGLE_PRIVACY_URL = 'https://policies.google.com/privacy';
 const INGREDIENT_QUESTION_TITLE_ID = 'ingredient-question-title';
 const OBF_DATA_LICENSE_URL = 'https://opendatacommons.org/licenses/odbl/1-0/';
 const OBF_IMAGE_LICENSE_URL = 'https://creativecommons.org/licenses/by-sa/3.0/';
@@ -685,6 +691,201 @@ function SparkleIcon() {
   );
 }
 
+function YouTubeBrandLink({ onOpen }: { onOpen: (url: string) => void }) {
+  return (
+    <button
+      type="button"
+      className="youtube-brand-link"
+      onClick={() => onOpen(YOUTUBE_HOME_URL)}
+      aria-label="YouTube 홈 열기"
+    >
+      <img src="/youtube-logo.svg" alt="YouTube" />
+    </button>
+  );
+}
+
+function videoPublishedLabel(value?: string): string {
+  if (!value) {
+    return '';
+  }
+  const published = new Date(value);
+  if (Number.isNaN(published.getTime())) {
+    return '';
+  }
+  return new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(published);
+}
+
+interface VideoReviewSectionProps {
+  product: Product;
+  productName: string;
+  policyAccepted: boolean;
+  onOpen: (url: string) => void;
+}
+
+function VideoReviewSection({
+  product,
+  productName,
+  policyAccepted,
+  onOpen,
+}: VideoReviewSectionProps) {
+  const [reviews, setReviews] = useState<ProductVideoReviews | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const policyAcceptedRef = useRef(policyAccepted);
+  const sectionId = `video-reviews-${product.id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+
+  useEffect(() => {
+    policyAcceptedRef.current = policyAccepted;
+    if (!policyAccepted) {
+      setReviews(null);
+      setError('');
+    }
+  }, [policyAccepted]);
+
+  async function loadReviews() {
+    setLoading(true);
+    setError('');
+    try {
+      const nextReviews = await requestProductVideoReviews(product.id, policyAccepted);
+      if (policyAcceptedRef.current) {
+        setReviews(nextReviews);
+      }
+    } catch (reviewError) {
+      if (policyAcceptedRef.current) {
+        setError(reviewError instanceof Error ? reviewError.message : 'YouTube 관련 영상을 불러오지 못했어요.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="video-review-section" aria-labelledby={`${sectionId}-title`}>
+      <div className="video-review-heading">
+        <YouTubeBrandLink onOpen={onOpen} />
+        <div>
+          <strong id={`${sectionId}-title`}>제품 관련 YouTube 영상</strong>
+          <p>제품명으로 자동 검색한 공개 결과예요. 실제 사용·독립 후기 여부는 영상에서 확인해 주세요.</p>
+        </div>
+      </div>
+
+      <div className="video-review-consent">
+        <p>
+          제품명으로 검색하며, YouTube 썸네일을 표시할 때 Google이 IP 주소 등 네트워크 정보를
+          처리할 수 있어요. 영상은 추천 순위·리뷰 평점·데이터 신뢰도에 반영하지 않아요.
+        </p>
+        <div className="video-review-policy-links" aria-label="YouTube 기능 정책 링크">
+          <button type="button" onClick={() => onOpen(termsOfUseUrl())}>서비스 이용조건</button>
+          <button type="button" onClick={() => onOpen(privacyPolicyUrl())}>개인정보 처리 안내</button>
+          <button type="button" onClick={() => onOpen(YOUTUBE_TERMS_URL)}>YouTube 이용약관</button>
+          <button type="button" onClick={() => onOpen(GOOGLE_PRIVACY_URL)}>Google 개인정보처리방침</button>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        className="video-review-load"
+        aria-controls={`${sectionId}-results`}
+        aria-busy={loading}
+        aria-disabled={loading || !policyAccepted}
+        disabled={!policyAccepted}
+        onClick={() => {
+          if (!loading && policyAccepted) {
+            void loadReviews();
+          }
+        }}
+      >
+        {loading
+          ? '관련 영상을 찾고 있어요…'
+          : error
+            ? 'YouTube 관련 영상 다시 시도'
+            : reviews
+              ? 'YouTube 관련 영상 다시 확인'
+              : 'YouTube 관련 영상 찾아보기'}
+        <ArrowIcon />
+      </button>
+
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {loading
+          ? 'YouTube에서 관련 영상을 찾고 있어요.'
+          : error
+            ? ''
+            : reviews
+              ? reviews.videos.length > 0
+                ? `제품 관련 YouTube 영상 ${reviews.videos.length}개를 찾았어요.`
+                : reviews.messageKo
+              : ''}
+      </p>
+
+      <div id={`${sectionId}-results`} aria-busy={loading}>
+        {error && (
+          <div className="video-review-error" role="alert">
+            <p>{error}</p>
+          </div>
+        )}
+
+        {reviews && (
+          <div className="video-review-results">
+            <p className="video-review-disclaimer">{reviews.disclaimerKo}</p>
+            {reviews.videos.length > 0 ? (
+              <div className="video-review-list">
+                {reviews.videos.map((video) => (
+                  <article key={video.videoId} className="video-review-item">
+                    {video.thumbnailUrl && (
+                      <img
+                        className="video-review-thumbnail"
+                        src={video.thumbnailUrl}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+                    <div>
+                      <span className="video-review-channel">{video.channelTitle}</span>
+                      <h4>{video.title}</h4>
+                      <p>
+                        {videoPublishedLabel(video.publishedAt)}
+                        {video.hasPaidProductPlacement && (
+                          <span className="paid-promotion-badge">유료 프로모션 표시 있음</span>
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onOpen(video.url)}
+                      aria-label={`${productName}, ${video.channelTitle} 영상을 YouTube에서 보기`}
+                    >
+                      YouTube에서 영상 보기
+                      <ArrowIcon />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="video-review-status">{reviews.messageKo}</p>
+            )}
+
+            <button
+              type="button"
+              className="video-review-search"
+              onClick={() => onOpen(reviews.searchUrl)}
+              aria-label={`${productName} 관련 영상을 YouTube에서 더 검색하기`}
+            >
+              {reviews.videos.length > 0 ? '다른 관련 영상 더 찾아보기' : '제품명으로 YouTube 검색'}
+              <ArrowIcon />
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 interface ChipGroupProps {
   options: ReadonlyArray<{ value: string; label: string }>;
   selected: string | string[];
@@ -737,6 +938,7 @@ interface ProductCardProps {
   onToggleSaved: (item: RecommendationItem) => void;
   onCompareOffers: (item: RecommendationItem) => void;
   onOpenInformation: (url: string) => void;
+  serviceTermsAccepted: boolean;
   compareSelected?: boolean;
   onToggleProductComparison?: (item: RecommendationItem) => void;
   compact?: boolean;
@@ -749,6 +951,7 @@ function ProductCard({
   onToggleSaved,
   onCompareOffers,
   onOpenInformation,
+  serviceTermsAccepted,
   compareSelected = false,
   onToggleProductComparison,
   compact = false,
@@ -937,6 +1140,13 @@ function ProductCard({
                 <strong>확인해 주세요</strong> {caution}
               </p>
             )}
+
+            <VideoReviewSection
+              product={product}
+              productName={productDisplayName(item)}
+              policyAccepted={serviceTermsAccepted}
+              onOpen={onOpenInformation}
+            />
           </>
         )}
 
@@ -1238,6 +1448,7 @@ function App() {
   const [error, setError] = useState('');
   const [validation, setValidation] = useState('');
   const [toast, setToast] = useState('');
+  const [serviceTermsAccepted, setServiceTermsAccepted] = useState(false);
   const toastTimer = useRef<number | undefined>(undefined);
   const screenStack = useRef<Screen[]>(['survey']);
   const offerDialogTrigger = useRef<HTMLElement | null>(null);
@@ -1246,6 +1457,7 @@ function App() {
   const categoryQuestionRef = useRef<HTMLElement | null>(null);
   const primaryConcernRef = useRef<HTMLElement | null>(null);
   const ingredientQuestionRef = useRef<HTMLElement | null>(null);
+  const serviceTermsConsentRef = useRef<HTMLInputElement | null>(null);
   const privacyConsentRef = useRef<HTMLInputElement | null>(null);
 
   const savedIds = useMemo(() => new Set(savedProductIds), [savedProductIds]);
@@ -1436,6 +1648,7 @@ function App() {
     setSavedProductIds([]);
     setSavedItemCache({});
     setCompareProductIds([]);
+    setServiceTermsAccepted(false);
     setResult(null);
     setAnswers(INITIAL_ANSWERS);
     setError('');
@@ -1456,6 +1669,12 @@ function App() {
   function openPrivacyNotice() {
     void openExternalUrl(privacyPolicyUrl()).catch((openError: unknown) => {
       showToast(openError instanceof Error ? openError.message : '개인정보 처리 안내를 열지 못했어요.');
+    });
+  }
+
+  function openTermsNotice() {
+    void openExternalUrl(termsOfUseUrl()).catch((openError: unknown) => {
+      showToast(openError instanceof Error ? openError.message : '서비스 이용조건을 열지 못했어요.');
     });
   }
 
@@ -1550,6 +1769,13 @@ function App() {
       window.requestAnimationFrame(() => {
         ingredientQuestionRef.current?.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
       });
+      return;
+    }
+
+    if (!serviceTermsAccepted) {
+      setValidation('서비스 이용조건과 개인정보 처리 안내의 필수 동의가 필요해요.');
+      serviceTermsConsentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      window.requestAnimationFrame(() => serviceTermsConsentRef.current?.focus({ preventScroll: true }));
       return;
     }
 
@@ -1868,6 +2094,28 @@ function App() {
                 </div>
               )}
 
+              <div className="privacy-consent privacy-consent--required">
+                <label>
+                  <input
+                    ref={serviceTermsConsentRef}
+                    type="checkbox"
+                    checked={serviceTermsAccepted}
+                    onChange={(event) => setServiceTermsAccepted(event.target.checked)}
+                    aria-describedby={validation && !serviceTermsAccepted ? VALIDATION_MESSAGE_ID : undefined}
+                    aria-invalid={Boolean(validation && !serviceTermsAccepted) || undefined}
+                  />
+                  <span>
+                    <strong>필수 동의</strong> · 서비스 이용조건과 개인정보 처리 안내를 확인하고 동의해요.
+                    YouTube 관련 영상 기능을 사용하면 YouTube 이용약관에 따르며, 제품명과 썸네일
+                    요청 과정의 네트워크 정보가 Google에서 처리될 수 있어요.
+                  </span>
+                </label>
+                <div className="consent-policy-links">
+                  <button type="button" onClick={openTermsNotice}>서비스 이용조건</button>
+                  <button type="button" onClick={openPrivacyNotice}>개인정보 처리 안내</button>
+                </div>
+              </div>
+
               <div className="privacy-consent">
                 <label>
                   <input
@@ -1934,6 +2182,7 @@ function App() {
                           onToggleSaved={toggleSaved}
                           onCompareOffers={openOfferComparison}
                           onOpenInformation={openInformationUrl}
+                          serviceTermsAccepted={serviceTermsAccepted}
                         />
                       </div>
                     ))}
@@ -1961,6 +2210,7 @@ function App() {
                             onToggleSaved={toggleSaved}
                             onCompareOffers={openOfferComparison}
                             onOpenInformation={openInformationUrl}
+                            serviceTermsAccepted={serviceTermsAccepted}
                           />
                         </div>
                       ))}
@@ -2136,6 +2386,7 @@ function App() {
                     onToggleSaved={toggleSaved}
                     onCompareOffers={openOfferComparison}
                     onOpenInformation={openInformationUrl}
+                    serviceTermsAccepted={serviceTermsAccepted}
                   />
                 ))}
               </div>

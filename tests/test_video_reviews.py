@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import httpx
+from fastapi.testclient import TestClient
+
+from k_beauty_agent import web
+from k_beauty_agent.models import Product
+from k_beauty_agent.storage import SQLiteStore
+from k_beauty_agent.video_reviews import YouTubeReviewService
+
+
+def _product() -> Product:
+    return Product(
+        id="round-lab-1025-dokdo-cleanser",
+        name="Round Lab 1025 Dokdo Cleanser",
+        display_name_ko="라운드랩 1025 독도 클렌저",
+        brand="Round Lab",
+        category="cleanser",
+        country="Korea",
+        ingredients=("Glycerin",),
+    )
+
+
+def test_without_api_key_returns_safe_product_specific_youtube_search() -> None:
+    service = YouTubeReviewService(None)
+
+    result = service.reviews_for_product(_product())
+
+    assert result["status"] == "search_only"
+    assert result["videos"] == []
+    assert "API" not in result["message_ko"]
+    assert "연동 키" not in result["message_ko"]
+    assert result["search_url"].startswith("https://www.youtube.com/results?search_query=")
+    assert "%EB%9D%BC%EC%9A%B4%EB%93%9C%EB%9E%A9" in result["search_url"]
+    assert result["terms_url"] == "https://www.youtube.com/t/terms"
+    assert result["privacy_url"] == "https://policies.google.com/privacy"
+    service.close()
+
+
+def test_api_results_are_verified_enriched_and_cached() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert request.headers["x-goog-api-key"] == "server-secret-key"
+        assert "server-secret-key" not in str(request.url)
+        if request.url.path.endswith("/search"):
+            assert request.url.params["type"] == "video"
+            assert request.url.params["safeSearch"] == "strict"
+            assert "Round Lab" in request.url.params["q"]
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {"id": {"videoId": "abcDEF_123-"}, "snippet": {}},
+                        {"id": {"videoId": "private1234"}, "snippet": {}},
+                    ]
+                },
+            )
+        assert request.url.path.endswith("/videos")
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "id": "abcDEF_123-",
+                        "snippet": {
+                            "title": "I used Round Lab &amp; here is my review",
+                            "channelTitle": "Skin Creator",
+                            "publishedAt": "2026-07-01T01:02:03Z",
+                            "thumbnails": {
+                                "medium": {"url": "https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg"}
+                            },
+                        },
+                        "status": {"privacyStatus": "public", "embeddable": True},
+                        "contentDetails": {"duration": "PT8M12S"},
+                        "paidProductPlacementDetails": {"hasPaidProductPlacement": True},
+                    },
+                    {
+                        "id": "private1234",
+                        "snippet": {"title": "Private", "channelTitle": "Hidden"},
+                        "status": {"privacyStatus": "private"},
+                    },
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    service = YouTubeReviewService("server-secret-key", client=client)
+
+    first = service.reviews_for_product(_product(), limit=3)
+    second = service.reviews_for_product(_product(), limit=3)
+
+    assert first == second
+    assert "server-secret-key" not in str(first)
+    assert len(calls) == 2
+    assert first["status"] == "ready"
+    assert first["videos"] == [
+        {
+            "video_id": "abcDEF_123-",
+            "title": "I used Round Lab & here is my review",
+            "channel_title": "Skin Creator",
+            "published_at": "2026-07-01T01:02:03Z",
+            "duration": "PT8M12S",
+            "thumbnail_url": "https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg",
+            "url": "https://www.youtube.com/watch?v=abcDEF_123-",
+            "has_paid_product_placement": True,
+        }
+    ]
+    client.close()
+
+
+def test_malformed_thumbnail_and_upstream_failure_fail_closed() -> None:
+    def malformed_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/search"):
+            return httpx.Response(200, json={"items": [{"id": {"videoId": "abcDEF_123-"}}]})
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "id": "abcDEF_123-",
+                        "snippet": {
+                            "title": "Round Lab Review",
+                            "channelTitle": "Creator",
+                            "thumbnails": {"medium": {"url": "https://i.ytimg.com.attacker.example/x.jpg"}},
+                        },
+                        "status": {"privacyStatus": "public"},
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(malformed_handler))
+    result = YouTubeReviewService("key", client=client).reviews_for_product(_product())
+    assert result["videos"][0]["thumbnail_url"] is None
+    client.close()
+
+    failing_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: httpx.Response(503, json={"error": "quota"}))
+    )
+    fallback = YouTubeReviewService("key", client=failing_client).reviews_for_product(_product())
+    assert fallback["status"] == "temporarily_unavailable"
+    assert fallback["videos"] == []
+    assert fallback["search_url"].startswith("https://www.youtube.com/results?")
+    failing_client.close()
+
+
+def test_video_review_endpoint_validates_product_and_never_changes_recommendation_data(monkeypatch) -> None:
+    class StubService:
+        def reviews_for_product(self, product: Product, *, limit: int = 3):
+            return {"status": "ready", "product_id": product.id, "limit": limit, "videos": []}
+
+    monkeypatch.setattr(web, "youtube_reviews", StubService())
+    client = TestClient(web.app)
+    existing_product = web.agent.database.products[0]
+
+    headers = {"X-YouTube-Policy-Accepted": web.YOUTUBE_POLICY_ACCEPTANCE_VERSION}
+    response = client.get(
+        f"/api/v2/products/{existing_product.id}/video-reviews?limit=2",
+        headers=headers,
+    )
+    missing = client.get("/api/v2/products/not-a-product/video-reviews", headers=headers)
+    no_acceptance = client.get(f"/api/v2/products/{existing_product.id}/video-reviews")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "product_id": existing_product.id,
+        "limit": 2,
+        "videos": [],
+    }
+    assert missing.status_code == 404
+    assert no_acceptance.status_code == 428
+
+
+def test_daily_quota_uses_provider_day_and_persists_across_service_instances(tmp_path) -> None:
+    quota_day = ["2026-07-21"]
+    store = SQLiteStore(tmp_path / "quota.sqlite3")
+    first = YouTubeReviewService(
+        "key",
+        daily_search_limit=1,
+        quota_store=store,
+        quota_day_provider=lambda: quota_day[0],
+    )
+    second = YouTubeReviewService(
+        "key",
+        daily_search_limit=1,
+        quota_store=store,
+        quota_day_provider=lambda: quota_day[0],
+    )
+
+    assert first._reserve_search() is True
+    assert second._reserve_search() is False
+    quota_day[0] = "2026-07-22"
+    assert second._reserve_search() is True
+    first.close()
+    second.close()
+
+
+def test_upstream_quota_error_opens_daily_circuit_breaker() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            403,
+            json={"error": {"errors": [{"reason": "quotaExceeded"}]}},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    service = YouTubeReviewService("key", daily_search_limit=3, client=client)
+
+    first = service.reviews_for_product(_product())
+    second = service.reviews_for_product(replace(_product(), id="another-round-lab-product"))
+
+    assert first["status"] == "quota_limited"
+    assert second["status"] == "quota_limited"
+    assert calls == 1
+    client.close()
+
+
+def test_upstream_concurrency_guard_returns_fallback_without_calling_google() -> None:
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: (_ for _ in ()).throw(AssertionError("unexpected call")))
+    )
+    service = YouTubeReviewService("key", client=client, max_concurrent_searches=1)
+    assert service._upstream_slots.acquire(blocking=False)
+    try:
+        result = service.reviews_for_product(_product())
+    finally:
+        service._upstream_slots.release()
+
+    assert result["status"] == "temporarily_unavailable"
+    client.close()
+
+
+def test_video_review_endpoint_rate_limits_bursts(monkeypatch) -> None:
+    class StubService:
+        def reviews_for_product(self, product: Product, *, limit: int = 3):
+            return {"status": "ready", "product_id": product.id, "videos": []}
+
+    monkeypatch.setattr(web, "youtube_reviews", StubService())
+    monkeypatch.setattr(web, "VIDEO_REVIEW_GLOBAL_RATE_LIMIT_REQUESTS", 2)
+    web._rate_limit_buckets.clear()
+    client = TestClient(web.app)
+    product = web.agent.database.products[0]
+    headers = {"X-YouTube-Policy-Accepted": web.YOUTUBE_POLICY_ACCEPTANCE_VERSION}
+    try:
+        first = client.get(f"/api/v2/products/{product.id}/video-reviews", headers=headers)
+        second = client.get(f"/api/v2/products/{product.id}/video-reviews", headers=headers)
+        limited = client.get(f"/api/v2/products/{product.id}/video-reviews", headers=headers)
+    finally:
+        web._rate_limit_buckets.clear()
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == str(web.VIDEO_REVIEW_RATE_LIMIT_WINDOW_SECONDS)

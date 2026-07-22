@@ -63,6 +63,20 @@ def product_reason_llm_enabled() -> bool:
     return enabled and bool(os.getenv("OPENAI_API_KEY"))
 
 
+def youtube_api_key() -> str | None:
+    value = os.getenv("YOUTUBE_API_KEY", "").strip()
+    return value or None
+
+
+def youtube_search_daily_limit() -> int:
+    return max(1, min(100, int(os.getenv("YOUTUBE_SEARCH_DAILY_LIMIT", "90"))))
+
+
+def youtube_review_cache_ttl_seconds() -> int:
+    value = int(os.getenv("YOUTUBE_REVIEW_CACHE_TTL_SECONDS", "86400"))
+    return max(300, min(24 * 60 * 60, value))
+
+
 def session_secret() -> str:
     return _secret_env("SESSION_SECRET", "dev-session-secret-change-me")
 
