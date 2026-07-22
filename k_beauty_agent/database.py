@@ -4,9 +4,23 @@ import csv
 import json
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlparse
 
-from .knowledge_base import find_evidence_for_ingredient, normalize_token
+from .knowledge_base import find_evidence_for_ingredient, ingredient_name_matches, normalize_token
 from .models import Product
+
+
+_REVIEW_EVIDENCE_HOSTS = {
+    "glowpick.com",
+    "www.glowpick.com",
+    "glowpick.co.kr",
+    "www.oliveyoung.co.kr",
+    "oliveyoung.co.kr",
+    "www.ulta.com",
+    "ulta.com",
+    "www.marksandspencer.com",
+    "marksandspencer.com",
+}
 
 
 class ProductDatabase:
@@ -109,6 +123,14 @@ class ProductDatabase:
         query_tokens = set(normalize_token(query).split())
         category_set = {normalize_token(item) for item in categories or []}
         concern_set = {normalize_token(item) for item in concerns or []}
+        if "clogged pores" in concern_set:
+            concern_set.add("pores")
+        if "pores" in concern_set:
+            concern_set.add("clogged pores")
+        if "dullness" in concern_set:
+            concern_set.add("hyperpigmentation")
+        if "hyperpigmentation" in concern_set:
+            concern_set.add("dullness")
         ingredient_set = {normalize_token(item) for item in ingredients or []}
         excluded_ingredient_set = {normalize_token(item) for item in exclude_ingredients or []}
 
@@ -132,7 +154,18 @@ class ProductDatabase:
             if query_tokens:
                 score += sum(1.0 for token in query_tokens if token in haystack)
             if category_set:
-                score += 4.0 if product_category in category_set else 0.0
+                if "basic" in category_set and product_category in {
+                    "cleanser",
+                    "toner",
+                    "serum",
+                    "moisturizer",
+                    "sunscreen",
+                }:
+                    # "Basic" means the user wants help choosing a routine
+                    # step, not a literal catalog category.
+                    score += 1.0
+                elif product_category in category_set:
+                    score += 4.0
             if concern_set:
                 product_concerns = self._inferred_concerns[product.id]
                 score += 2.0 * len(product_concerns & concern_set)
@@ -277,6 +310,7 @@ def _load_review_summaries(path: str | Path | None) -> dict[str, dict[str, objec
                 f"Common positives: {row.get('common_positives', '')}",
                 f"Common cautions: {row.get('common_cautions', '')}",
             ]
+            review_source_url = _review_evidence_url(row)
             summaries[product_id] = {
                 "review_summary": row.get("summary", "").strip(),
                 "review_summary_en": row.get("summary_en", "").strip(),
@@ -285,11 +319,33 @@ def _load_review_summaries(path: str | Path | None) -> dict[str, dict[str, objec
                 "negative_reviews": _split_review_field(row.get("negative_reviews", "")),
                 "positive_reviews_en": _split_review_field(row.get("positive_reviews_en", "")),
                 "negative_reviews_en": _split_review_field(row.get("negative_reviews_en", "")),
-                "review_source_url": (
-                    row.get("review_source_url") or row.get("source_url") or ""
-                ).strip(),
+                "review_source_url": review_source_url,
+                "review_verified_at": (row.get("verified_at") or "").strip() if review_source_url else "",
             }
     return summaries
+
+
+def _review_evidence_url(row: dict[str, str]) -> str:
+    """Return only URLs that can substantiate customer-review metadata.
+
+    The legacy ``source_url`` column also contains brand, ingredient, and
+    regulatory pages. Those remain useful product references elsewhere but do
+    not verify a rating, review count, or review-summary freshness.
+    """
+
+    explicit = (row.get("review_source_url") or "").strip()
+    candidate = explicit or (row.get("source_url") or "").strip()
+    if not candidate:
+        return ""
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return ""
+    if parsed.scheme != "https" or not parsed.hostname:
+        return ""
+    if explicit:
+        return candidate
+    return candidate if parsed.hostname.lower() in _REVIEW_EVIDENCE_HOSTS else ""
 
 
 def _split_review_field(value: str | None) -> tuple[str, ...]:
@@ -299,11 +355,4 @@ def _split_review_field(value: str | None) -> tuple[str, ...]:
 
 
 def _ingredient_in_product(ingredient: str, product_ingredients: set[str]) -> bool:
-    wanted_evidence = find_evidence_for_ingredient(ingredient)
-    for product_ingredient in product_ingredients:
-        product_evidence = find_evidence_for_ingredient(product_ingredient)
-        if wanted_evidence and product_evidence and wanted_evidence.name == product_evidence.name:
-            return True
-        if ingredient in product_ingredient or product_ingredient in ingredient:
-            return True
-    return False
+    return any(ingredient_name_matches(ingredient, product_ingredient) for product_ingredient in product_ingredients)

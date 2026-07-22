@@ -41,6 +41,7 @@ def test_catalog_links_separate_retailers_from_product_information() -> None:
     assert [(link.kind, link.provider) for link in information] == [
         ("brand_official", "ETUDE"),
         ("ingredient_reference", "INCIDecoder"),
+        ("review_reference", "Ulta Beauty"),
         ("data_reference", "Open Beauty Facts"),
     ]
 
@@ -87,6 +88,7 @@ def test_v2_serializer_exposes_information_links_without_raw_purchase_fields() -
         "brand_official",
         "ingredient_reference",
         "data_reference",
+        "review_reference",
     }
     assert all(link["url"].startswith("https://") for link in data["external_links"])
 
@@ -104,3 +106,26 @@ def test_review_summary_source_url_is_loaded_into_product_sources() -> None:
     assert product.review_source_url == (
         "https://www.ulta.com/p/soonjung-2x-barrier-intensive-cream-pimprod2049666"
     )
+    review_links = [
+        link for link in information_links(product) if link.kind == "review_reference"
+    ]
+    assert len(review_links) == 1
+    assert review_links[0].provider == "Ulta Beauty"
+
+
+def test_ingredient_or_regulatory_pages_are_not_labeled_as_review_evidence() -> None:
+    data_dir = Path(__file__).resolve().parents[1] / "data"
+    database = ProductDatabase.from_csv(
+        data_dir / "products_verified.csv",
+        data_dir / "review_summaries.csv",
+    )
+
+    for product_id in (
+        "illiyoon-ceramide-ato-concentrate-cream",
+        "dr-g-green-mild-up-sun-plus",
+        "anua-heartleaf-silky-moisture-sun-cream",
+    ):
+        product = database.get(product_id)
+        assert product is not None
+        assert product.review_source_url is None
+        assert product.review_verified_at is None

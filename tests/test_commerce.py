@@ -6,6 +6,7 @@ import hmac
 import json
 import time
 from dataclasses import replace
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -14,9 +15,15 @@ from fastapi.testclient import TestClient
 from k_beauty_agent.agent import KBeautyAgent
 from k_beauty_agent.commerce import CommerceService, RedirectTokenError
 from k_beauty_agent.database import ProductDatabase
+from k_beauty_agent.knowledge_base import INGREDIENT_EVIDENCE
 from k_beauty_agent.localization import translate_caution
 from k_beauty_agent.models import Product, ProductScore
-from k_beauty_agent.serializers import fallback_personalized_reason, score_to_dict
+from k_beauty_agent.serializers import (
+    _date_status,
+    fallback_personalized_reason,
+    ingredient_explanations,
+    score_to_dict,
+)
 from k_beauty_agent.storage import SQLiteStore, hash_session
 
 
@@ -202,7 +209,70 @@ def test_price_diagnostics_do_not_leak_into_customer_copy() -> None:
 
     assert "checked" not in translate_caution(score.cautions[0], "ko")
     assert "가격" not in fallback_personalized_reason(score, "ko")
-    assert score_to_dict(score, "ko")["display_cautions"] == []
+    serialized = score_to_dict(score, "ko")
+    assert len(serialized["display_reasons"]) == 3
+    assert serialized["fit_reasons"] == serialized["display_reasons"]
+    assert len(serialized["display_cautions"]) == 1
+    assert serialized["caution"] == serialized["display_cautions"][0]
+    assert "checked" not in serialized["caution"]
+    assert "가격" not in serialized["caution"]
+
+
+def test_customer_cautions_localize_skin_and_ingredient_without_internal_terms() -> None:
+    skin_caution = translate_caution("DB suitability does not include oily skin", "ko")
+    ingredient_caution = translate_caution(
+        "salicylic acid can be less gentle for irritation-prone follow-ups",
+        "ko",
+    )
+
+    assert skin_caution == "제품 정보에서 지성 피부 적합 표시를 확인할 수 없어 사용 전 확인이 필요합니다."
+    assert ingredient_caution == "살리실산/BHA 성분은 예민한 피부에 자극이 될 수 있어 천천히 사용해 주세요."
+    assert "DB" not in skin_caution
+    assert "follow-up" not in ingredient_caution
+
+    avoid_caution = translate_caution("product DB says avoid for sensitive", "ko")
+    assert avoid_caution == "제품 정보상 민감 반응이 잦은 피부에는 주의가 필요해요. 처음에는 소량으로 시험해 주세요."
+    assert "DB" not in avoid_caution
+    assert "sensitive" not in avoid_caution
+
+
+def test_review_confidence_requires_a_verified_review_source_url() -> None:
+    product = replace(
+        _product(),
+        rating=4.8,
+        review_count=500,
+        review_source_url=None,
+        review_verified_at="2026-07-20",
+    )
+    serialized = score_to_dict(ProductScore(product=product, score=1.0), "ko")
+
+    reviews = serialized["data_confidence"]["factors"]["reviews"]
+    assert reviews["status"] == "missing"
+    assert reviews["checked_at"] is None
+    assert reviews["label_ko"] == "리뷰 근거 부족"
+    assert serialized["product"]["rating"] is None
+    assert serialized["product"]["review_count"] is None
+    assert serialized["score_components"]["review_confidence"] == 0.0
+
+
+def test_all_ingredient_explanation_display_fields_are_localized_to_korean() -> None:
+    explanations = ingredient_explanations([item.name for item in INGREDIENT_EVIDENCE])
+
+    assert len(explanations) == len(INGREDIENT_EVIDENCE)
+    for explanation, evidence in zip(explanations, INGREDIENT_EVIDENCE, strict=True):
+        assert explanation["display_name_ko"] != evidence.name
+        assert len(explanation["display_supports_ko"]) == len(evidence.supports)
+        assert all("_" not in value for value in explanation["display_supports_ko"])
+        assert all(value not in evidence.supports for value in explanation["display_supports_ko"])
+        assert len(explanation["display_cautions_ko"]) == len(evidence.cautions)
+        assert all(value not in evidence.cautions for value in explanation["display_cautions_ko"])
+        assert all(not any("a" <= character.lower() <= "z" for character in value) for value in explanation["display_cautions_ko"])
+
+
+def test_future_data_date_is_treated_as_missing() -> None:
+    future_date = (date.today() + timedelta(days=1)).isoformat()
+
+    assert _date_status(future_date) == "missing"
 
 
 def test_krw_budget_does_not_claim_an_unrelated_usd_catalog_price() -> None:
@@ -258,6 +328,71 @@ def test_mixed_currency_offers_use_only_krw_for_krw_lowest_price(tmp_path: Path)
     }
     assert summary["lowest_fresh_price_krw"] == 19_000
     assert summary["best_current_price"]["currency"] == "KRW"
+
+
+def test_out_of_stock_offer_is_not_used_as_current_lowest_price(tmp_path: Path) -> None:
+    _, service = _service(tmp_path)
+    service.upsert_retailer(
+        retailer_id="sold-out-shop",
+        display_name="Sold Out Shop",
+        base_url="https://soldout.example.com",
+        allowed_domains=["soldout.example.com"],
+    )
+    service.upsert_offer(
+        product_id="example-serum",
+        retailer_id="sold-out-shop",
+        destination_url="https://soldout.example.com/products/example-serum",
+        source_kind="approved_partner_feed",
+        offer_id="sold-out-offer",
+        price_amount=1_000,
+        currency="KRW",
+        stock_status="out_of_stock",
+        checked_at=1_784_505_600,
+        ttl_seconds=3_600,
+    )
+
+    bundle = service.offers_for_product("example-serum", now=1_784_505_700)
+    summary = service.product_summary("example-serum", now=1_784_505_700)
+
+    assert bundle["summary"]["lowest_fresh_price_krw"] == 19_000
+    assert bundle["summary"]["best_current_price"]["retailer_name"] == "Olive Young"
+    assert summary["lowest_fresh_price_krw"] == 19_000
+
+
+def test_only_out_of_stock_offer_leaves_current_price_unknown(tmp_path: Path) -> None:
+    product = replace(
+        _product("sold-out-only"),
+        purchase_url=None,
+        retailer_name=None,
+        price_krw=None,
+        price_checked_at=None,
+    )
+    _, service = _service(tmp_path, [product])
+    service.upsert_retailer(
+        retailer_id="sold-out-shop",
+        display_name="Sold Out Shop",
+        base_url="https://soldout.example.com",
+        allowed_domains=["soldout.example.com"],
+    )
+    service.upsert_offer(
+        product_id=product.id,
+        retailer_id="sold-out-shop",
+        destination_url=f"https://soldout.example.com/products/{product.id}",
+        source_kind="approved_partner_feed",
+        offer_id="sold-out-only-offer",
+        price_amount=9_000,
+        currency="KRW",
+        stock_status="out_of_stock",
+        checked_at=1_784_505_600,
+        ttl_seconds=3_600,
+    )
+
+    bundle = service.offers_for_product(product.id, now=1_784_505_700)
+    summary = service.product_summary(product.id, now=1_784_505_700)
+
+    assert bundle["summary"]["lowest_fresh_price_krw"] is None
+    assert bundle["summary"]["best_current_price"] is None
+    assert summary["lowest_fresh_price_krw"] is None
 
 
 def test_signed_redirect_rejects_tampering_expiry_and_non_allowlisted_target(tmp_path: Path) -> None:
@@ -447,6 +582,14 @@ def test_budget_ranking_uses_current_krw_offer_instead_of_catalog_snapshot(
     products = [
         replace(_product("alpha", name="Alpha Serum"), price_krw=50_000, oliveyoung_price_krw=50_000),
         replace(_product("beta", name="Beta Serum"), price_krw=50_000, oliveyoung_price_krw=50_000),
+        replace(
+            _product("gamma", name="Gamma Serum"),
+            purchase_url=None,
+            retailer_name=None,
+            price_krw=None,
+            oliveyoung_price_krw=None,
+            price_checked_at=None,
+        ),
     ]
     store, service = _service(tmp_path, products)
     now = int(time.time())
@@ -490,6 +633,11 @@ def test_budget_ranking_uses_current_krw_offer_instead_of_catalog_snapshot(
     assert response.status_code == 200
     assert [item["product"]["id"] for item in response.json()["results"]] == ["alpha"]
     assert response.json()["results"][0]["product"]["commerce"]["lowest_fresh_price_krw"] == 19_000
+    assert [item["product"]["id"] for item in response.json()["additional_candidates"]] == ["gamma"]
+    assert (
+        response.json()["additional_candidates"][0]["product"]["commerce"]["lowest_fresh_price_krw"]
+        is None
+    )
 
 
 def test_source_review_candidates_lists_only_unlinked_records(tmp_path: Path) -> None:

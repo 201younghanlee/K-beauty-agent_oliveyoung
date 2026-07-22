@@ -3,17 +3,19 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 
 from k_beauty_agent.agent import KBeautyAgent
 from k_beauty_agent.config import DEFAULT_CATALOG_MANIFEST, DEFAULT_GENERATED_CATALOG_CSV
 from k_beauty_agent.database import ProductDatabase
-from k_beauty_agent.knowledge_base import find_evidence_for_ingredient
+from k_beauty_agent.knowledge_base import canonical_ingredient_key, find_evidence_for_ingredient, ingredient_name_matches
 from k_beauty_agent.models import Product, SkinProfile
 from k_beauty_agent.recommender import IngredientHybridRecommender
 from k_beauty_agent.serializers import product_to_dict
-from k_beauty_agent.skin import analyze_skin_query
+from k_beauty_agent.followup_parser import sanitize_profile_patch
+from k_beauty_agent.skin import analyze_skin_query, canonicalize_ingredient_preferences
 from k_beauty_agent.web import _load_generated_catalog
 from scripts.refresh_catalog import CATALOG_COLUMNS
 
@@ -77,7 +79,12 @@ def test_reported_ingredients_are_allowed_for_general_matching_but_blocked_for_a
         desired_categories=["serum"],
         avoid_ingredients=["fragrance"],
     )
-    sensitive_skin = SkinProfile(skin_type="sensitive", concerns=["redness"], desired_categories=["serum"])
+    sensitive_skin = SkinProfile(
+        skin_type="dry",
+        sensitivity_level="frequent",
+        concerns=["redness"],
+        desired_categories=["serum"],
+    )
     pregnancy = SkinProfile(skin_type="dry", concerns=["hydration"], desired_categories=["serum"], pregnant_or_nursing=True)
 
     general_score = recommender.score_product(product, general)
@@ -118,10 +125,228 @@ def test_free_text_sensitive_skin_is_parsed_conservatively() -> None:
     profile = analyze_skin_query("oily sensitive skin hydrating moisturizer")
     fragrance_profile = analyze_skin_query("fragrance sensitive serum")
 
-    assert profile.skin_type == "sensitive"
-    assert fragrance_profile.skin_type == "sensitive"
+    assert profile.skin_type == "oily"
+    assert profile.sensitivity_level == "frequent"
+    assert fragrance_profile.skin_type == "unknown"
+    assert fragrance_profile.sensitivity_level == "frequent"
     assert "fragrance" in fragrance_profile.avoid_ingredients
     assert "fragrance" not in fragrance_profile.preferred_ingredients
+
+
+def test_preferred_ingredient_is_a_ranking_boost_not_a_hard_filter() -> None:
+    without_preference = replace(
+        _product("without-preference", tier="verified", ingredient_status="complete", source="curated"),
+        brand="Other Lab",
+    )
+    with_preference = replace(
+        _product("with-preference", tier="verified", ingredient_status="complete", source="curated"),
+        ingredients=("Glycerin", "Panthenol", "Niacinamide"),
+    )
+    profile = SkinProfile(
+        skin_type="dry",
+        concerns=["hydration"],
+        desired_categories=["serum"],
+        preferred_ingredients=["niacinamide"],
+    )
+
+    scored = IngredientHybridRecommender().score_products(
+        [without_preference, with_preference],
+        profile,
+    )
+
+    assert [item.product.id for item in scored] == ["with-preference", "without-preference"]
+    assert any("contains requested ingredient" in reason for reason in scored[0].reasons)
+
+
+def test_clogged_pores_matches_pores_catalog_and_evidence_aliases() -> None:
+    product = replace(
+        _product("pores", tier="verified", ingredient_status="complete", source="curated"),
+        ingredients=("Niacinamide",),
+        concerns=("pores",),
+    )
+    profile = SkinProfile(
+        skin_type="oily",
+        primary_concern="clogged_pores",
+        desired_categories=["serum"],
+    )
+
+    score = IngredientHybridRecommender().score_product(product, profile)
+    found = ProductDatabase([product]).search(concerns=["clogged_pores"], limit=10)
+
+    assert "niacinamide" in score.matched_ingredients
+    assert any("primary concern clogged_pores" in reason for reason in score.reasons)
+    assert [item.id for item in found] == ["pores"]
+
+
+def test_dullness_search_matches_hyperpigmentation_catalog_tag() -> None:
+    product = replace(
+        _product("tone", tier="verified", ingredient_status="complete", source="curated"),
+        concerns=("hyperpigmentation",),
+    )
+
+    found = ProductDatabase([product]).search(concerns=["dullness"], limit=10)
+
+    assert [item.id for item in found] == ["tone"]
+
+
+def test_budget_price_known_partition_precedes_brand_diversity() -> None:
+    base = _product("known-one", tier="verified", ingredient_status="complete", source="curated")
+    products = [
+        replace(base, brand="Same Brand", price_krw=10_000, rating=5.0, review_count=2_000),
+        replace(
+            base,
+            id="known-two",
+            name="Known Two",
+            brand="Same Brand",
+            price_krw=12_000,
+            rating=4.8,
+            review_count=1_500,
+        ),
+        replace(
+            base,
+            id="unknown-price",
+            name="Unknown Price",
+            brand="Other Brand",
+            price_krw=None,
+            rating=4.7,
+            review_count=1_000,
+        ),
+    ]
+    profile = SkinProfile(
+        skin_type="dry",
+        concerns=["hydration"],
+        desired_categories=["serum"],
+        max_price_krw=20_000,
+    )
+
+    ordered = IngredientHybridRecommender().score_products(products, profile)
+
+    assert [item.product.id for item in ordered[:2]] == ["known-one", "known-two"]
+    assert ordered[2].product.id == "unknown-price"
+
+
+def test_basic_category_expands_to_normal_skin_care_steps() -> None:
+    serum = _product("basic-serum", tier="verified", ingredient_status="complete", source="curated")
+    cleanser = replace(serum, id="basic-cleanser", name="Basic Cleanser", category="cleanser")
+
+    found = ProductDatabase([serum, cleanser]).search(categories=["basic"], limit=10)
+
+    assert {product.id for product in found} == {"basic-serum", "basic-cleanser"}
+
+
+def test_volatile_alcohol_avoid_does_not_match_fatty_or_benzyl_alcohol() -> None:
+    base = _product("cetearyl", tier="verified", ingredient_status="complete", source="curated")
+    products = [
+        replace(base, ingredients=("Cetearyl Alcohol",)),
+        replace(base, id="benzyl", name="Benzyl Serum", ingredients=("Benzyl Alcohol",)),
+        replace(base, id="denat", name="Denat Serum", ingredients=("Alcohol Denat.",)),
+    ]
+
+    found = ProductDatabase(products).search(
+        categories=["serum"],
+        exclude_ingredients=["alcohol"],
+        require_complete_ingredients=True,
+        limit=10,
+    )
+
+    assert {product.id for product in found} == {"cetearyl", "benzyl"}
+    assert ingredient_name_matches("alcohol", "Cetearyl Alcohol") is False
+    assert ingredient_name_matches("alcohol", "Benzyl Alcohol") is False
+    assert ingredient_name_matches("alcohol", "Alcohol Denat.") is True
+    assert ingredient_name_matches("ethanol", "Phenoxyethanol") is False
+    assert ingredient_name_matches("ethanol", "Methanol") is False
+    assert canonical_ingredient_key("phenoxyethanol") == "phenoxyethanol"
+
+
+def test_unrecognized_ingredient_matching_uses_phrase_boundaries() -> None:
+    assert ingredient_name_matches("rose", "sucrose") is False
+    assert ingredient_name_matches("tea", "stearic acid") is False
+    assert ingredient_name_matches("rose", "rose extract") is True
+    assert ingredient_name_matches("tea tree", "tea tree leaf oil") is True
+    assert ingredient_name_matches("rose water", "water") is False
+    assert ingredient_name_matches("coconut oil", "oil") is False
+    assert ingredient_name_matches("rose extract", "extract") is False
+
+
+def test_review_count_only_affects_ranking_with_a_verified_source() -> None:
+    unsourced = replace(_product("unsourced-review"), rating=4.9, review_count=5_000)
+    sourced = replace(
+        unsourced,
+        id="sourced-review",
+        review_source_url="https://www.ulta.com/p/example",
+        review_verified_at="2026-07-20",
+    )
+    recommender = IngredientHybridRecommender()
+
+    unsourced_score = recommender.score_product(unsourced, SkinProfile())
+    sourced_score = recommender.score_product(sourced, SkinProfile())
+
+    assert unsourced_score.score_components["review_confidence"] == 0.0
+    assert sourced_score.score_components["review_confidence"] == 1.0
+
+
+def test_nonvolatile_alcohol_names_are_not_canonicalized_as_broad_alcohol() -> None:
+    assert canonicalize_ingredient_preferences(["cetearyl alcohol"]) == []
+    assert canonicalize_ingredient_preferences(["benzyl alcohol"]) == []
+    assert canonicalize_ingredient_preferences(["alcohol"]) == ["alcohol"]
+    assert canonicalize_ingredient_preferences(["ethanol"]) == ["alcohol"]
+    assert canonical_ingredient_key("Alcohol Denat.") == "alcohol"
+    assert canonical_ingredient_key("Cetearyl Alcohol") == "cetearyl alcohol"
+    assert canonical_ingredient_key("nicotinamide") == "niacinamide"
+
+
+def test_structured_profile_can_preserve_bounded_unrecognized_ingredient_names() -> None:
+    public_patch = sanitize_profile_patch(
+        {
+            "avoid_ingredients": ["benzoyl peroxide", "cetearyl alcohol"],
+            "preferred_ingredients": ["ectoin"],
+        },
+        allow_unrecognized_ingredients=True,
+    )
+    llm_patch = sanitize_profile_patch(
+        {"avoid_ingredients": ["benzoyl peroxide"]},
+    )
+
+    assert public_patch["avoid_ingredients"] == ["benzoyl peroxide", "cetearyl alcohol"]
+    assert public_patch["preferred_ingredients"] == ["ectoin"]
+    assert "avoid_ingredients" not in llm_patch
+
+
+def test_structured_profile_rejects_contact_details_urls_and_note_sentences() -> None:
+    patch = sanitize_profile_patch(
+        {
+            "avoid_ingredients": [
+                "benzoyl peroxide",
+                "ectoin",
+                "cetearyl alcohol",
+                "younghan@example.com",
+                "010-1234-5678",
+                "https://example.com/private-note",
+                "private niacinamide note",
+                "this is a long private note that is not an ingredient name",
+            ],
+        },
+        allow_unrecognized_ingredients=True,
+    )
+
+    assert patch["avoid_ingredients"] == ["benzoyl peroxide", "ectoin", "cetearyl alcohol"]
+
+
+def test_unrecognized_avoid_ingredient_is_still_a_hard_catalog_filter() -> None:
+    base = _product("benzoyl", tier="verified", ingredient_status="complete", source="curated")
+    products = [
+        replace(base, ingredients=("Benzoyl Peroxide", "Glycerin")),
+        replace(base, id="safe", name="Safe Serum", ingredients=("Glycerin", "Panthenol")),
+    ]
+
+    found = ProductDatabase(products).search(
+        categories=["serum"],
+        exclude_ingredients=["benzoyl peroxide"],
+        require_complete_ingredients=True,
+        limit=10,
+    )
+
+    assert [product.id for product in found] == ["safe"]
 
 
 def test_normal_skin_does_not_trigger_the_english_no_avoid_parser() -> None:

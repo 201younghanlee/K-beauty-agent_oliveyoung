@@ -39,6 +39,30 @@ SENSITIVITY_TERMS = {
     "alcohol_sensitive": ("alcohol", "알코올"),
 }
 
+SENSITIVITY_LEVEL_TERMS = {
+    "low": (
+        "rarely sensitive",
+        "not sensitive",
+        "거의 민감하지 않",
+        "민감하지 않",
+    ),
+    "occasional": (
+        "sometimes sensitive",
+        "occasionally sensitive",
+        "가끔 예민",
+        "가끔 민감",
+    ),
+    "frequent": (
+        "easily stings",
+        "easily gets red",
+        "often sensitive",
+        "쉽게 따갑",
+        "쉽게 붉",
+        "자주 예민",
+        "자주 민감",
+    ),
+}
+
 GENTLE_TERMS = (
     "gentle",
     "mild",
@@ -100,7 +124,7 @@ INGREDIENT_TERMS = {
     "centella asiatica": ("centella", "centella asiatica", "centella asiatica extract", "cica", "병풀", "병풀추출물", "시카"),
     "zinc pca": ("zinc pca", "징크 pca", "징크피씨에이"),
     "fragrance": ("fragrance", "parfum", "perfume", "lavender oil", "limonene", "linalool", "essential oil", "향료", "향수", "라벤더오일", "리모넨", "리날룰", "에센셜오일"),
-    "alcohol": ("alcohol", "ethanol", "cetearyl alcohol", "알코올", "에탄올", "세테아릴알코올"),
+    "alcohol": ("alcohol", "ethanol", "알코올", "에탄올"),
     "snail": ("snail", "snail secretion filtrate", "달팽이", "스네일", "달팽이점액"),
     "tea tree": ("tea tree", "tea tree leaf oil", "tea tree extract", "tea tree leaf extract", "티트리", "티트리오일", "티트리추출물"),
     "rice extract": ("rice extract", "rice bran extract", "rice bran water", "oryza sativa", "쌀", "쌀추출물", "쌀겨", "미강"),
@@ -123,6 +147,26 @@ INGREDIENT_TERMS = {
     "glutathione": ("glutathione", "글루타치온"),
 }
 
+FATTY_ALCOHOL_TERMS = (
+    "cetearyl alcohol",
+    "cetyl alcohol",
+    "stearyl alcohol",
+    "behenyl alcohol",
+    "arachidyl alcohol",
+    "세테아릴알코올",
+    "세틸알코올",
+    "스테아릴알코올",
+    "베헤닐알코올",
+    "아라키딜알코올",
+)
+NON_VOLATILE_ALCOHOL_TERMS = (
+    *FATTY_ALCOHOL_TERMS,
+    "benzyl alcohol",
+    "phenethyl alcohol",
+    "벤질알코올",
+    "페네틸알코올",
+)
+
 AVOID_CONTEXT = ("빼고", "제외", "없는", "없이", "안", "싫", "피하", "알러지", "알레르기", "avoid", "without", "no ")
 
 
@@ -130,13 +174,20 @@ def analyze_skin_query(query: str) -> SkinProfile:
     text = query.lower()
     profile = SkinProfile()
 
-    matched_skin_types = [skin_type for skin_type, terms in SKIN_TYPE_TERMS.items() if _contains_any(text, terms)]
-    if "sensitive" in matched_skin_types:
-        profile.skin_type = "sensitive"
-    elif "combination" in matched_skin_types or {"oily", "dry"}.issubset(matched_skin_types):
+    matched_skin_types = [
+        skin_type
+        for skin_type, terms in SKIN_TYPE_TERMS.items()
+        if skin_type != "sensitive" and _contains_any(text, terms)
+    ]
+    profile.sensitivity_level = _extract_sensitivity_level(text)
+    if "combination" in matched_skin_types or {"oily", "dry"}.issubset(matched_skin_types):
         profile.skin_type = "combination"
     elif matched_skin_types:
         profile.skin_type = matched_skin_types[0]
+    elif profile.sensitivity_level:
+        # Sensitivity is independent of oil/moisture type. Preserve the
+        # explicit signal without guessing oily, dry, or combination skin.
+        profile.skin_type = "unknown"
 
     for concern, terms in CONCERN_TERMS.items():
         if _contains_any(text, terms):
@@ -162,9 +213,6 @@ def analyze_skin_query(query: str) -> SkinProfile:
 
     profile.avoid_ingredients.extend(_extract_avoid_ingredients(text))
     profile.preferred_ingredients.extend(_extract_preferred_ingredients(text))
-    profile.preferred_ingredients = [
-        ingredient for ingredient in profile.preferred_ingredients if ingredient not in profile.avoid_ingredients
-    ]
     profile.texture_preference = _extract_texture_preference(text)
     profile.max_price_usd = _extract_max_price_usd(text)
     profile.max_price_krw = _extract_max_price_krw(text)
@@ -197,11 +245,11 @@ def analyze_skin_query(query: str) -> SkinProfile:
 
     if not profile.skin_type:
         profile.uncertainty.append("skin_type")
-        profile.follow_up_questions.append("What is your skin type: oily, dry, combination, sensitive, or normal?")
+        profile.follow_up_questions.append("What is your oil/moisture skin type: oily, dry, combination, normal, or unknown?")
     if not profile.concerns:
         profile.uncertainty.append("concerns")
         profile.follow_up_questions.append("What are your top concerns: oil control, acne, hydration, redness, pigmentation, or aging?")
-    if "sensitive" in (profile.skin_type or "") and not profile.avoid_ingredients:
+    if profile.sensitivity_level == "frequent" and not profile.avoid_ingredients:
         profile.follow_up_questions.append("Are there any cosmetic ingredient names you prefer to avoid?")
 
     return profile
@@ -209,6 +257,18 @@ def analyze_skin_query(query: str) -> SkinProfile:
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term.lower() in text for term in terms)
+
+
+def _extract_sensitivity_level(text: str) -> str | None:
+    # Check explicit low/occasional/frequent phrases before the generic
+    # "sensitive" vocabulary, because phrases such as "not sensitive" also
+    # contain that generic word.
+    for level in ("low", "occasional", "frequent"):
+        if _contains_any(text, SENSITIVITY_LEVEL_TERMS[level]):
+            return level
+    if _contains_any(text, SKIN_TYPE_TERMS["sensitive"]):
+        return "frequent"
+    return None
 
 
 def _category_matches(text: str, category: str, terms: tuple[str, ...]) -> bool:
@@ -240,12 +300,19 @@ def _category_matches(text: str, category: str, terms: tuple[str, ...]) -> bool:
 def _extract_preferred_ingredients(text: str) -> list[str]:
     values: list[str] = []
     for ingredient, terms in INGREDIENT_TERMS.items():
+        if ingredient == "alcohol" and not _contains_volatile_alcohol(text):
+            continue
         for term in terms:
             normalized_term = normalize_token(term)
             if normalized_term not in normalize_token(text):
                 continue
             window = _term_window(text, term, radius=18)
             if any(marker in window for marker in AVOID_CONTEXT):
+                continue
+            if ingredient in {"fragrance", "alcohol"} and any(
+                marker in window
+                for marker in ("sensitive", "민감", "예민", "fragrance-free", "fragrance free", "무향")
+            ):
                 continue
             values.append(ingredient)
             break
@@ -255,6 +322,8 @@ def _extract_preferred_ingredients(text: str) -> list[str]:
 def _extract_avoid_ingredients(text: str) -> list[str]:
     values: list[str] = []
     for ingredient, terms in INGREDIENT_TERMS.items():
+        if ingredient == "alcohol" and not _contains_volatile_alcohol(text):
+            continue
         for term in terms:
             normalized_term = normalize_token(term)
             if normalized_term not in normalize_token(text):
@@ -270,9 +339,24 @@ def _canonical_ingredients(text: str) -> list[str]:
     found: list[str] = []
     normalized = normalize_token(text)
     for ingredient, terms in INGREDIENT_TERMS.items():
+        if ingredient == "alcohol" and not _contains_volatile_alcohol(text):
+            continue
         if any(normalize_token(term) in normalized for term in terms):
             found.append(ingredient)
     return found
+
+
+def _contains_volatile_alcohol(text: str) -> bool:
+    """Recognize ethanol-style alcohol without broadening fatty alcohols."""
+
+    normalized = normalize_token(text)
+    for non_volatile_alcohol in NON_VOLATILE_ALCOHOL_TERMS:
+        normalized = normalized.replace(normalize_token(non_volatile_alcohol), " ")
+    normalized = " ".join(normalized.split())
+    return any(
+        re.search(rf"(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])", normalized)
+        for marker in ("alcohol", "ethanol", "알코올", "에탄올")
+    )
 
 
 def canonicalize_ingredient_preferences(values: list[str]) -> list[str]:
@@ -438,7 +522,6 @@ def _infer_default_concerns(profile: SkinProfile) -> None:
     defaults = {
         "oily": ["oil_control"],
         "dry": ["hydration", "barrier_support"],
-        "sensitive": ["redness", "barrier_support"],
         "combination": ["oil_control", "hydration"],
     }
     profile.concerns.extend(defaults.get(profile.skin_type, []))

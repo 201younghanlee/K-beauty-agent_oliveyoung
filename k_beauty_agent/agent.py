@@ -55,11 +55,13 @@ class KBeautyAgent:
     ) -> Recommendation:
         if structured_profile is not None:
             profile = profile_from_dict(structured_profile)
+            profile_concerns = _ordered_concerns(profile)
             search_query = " ".join(
-                [*profile.desired_categories, *profile.concerns, *profile.preferred_ingredients]
+                [*profile.desired_categories, *profile_concerns]
             )
         else:
             profile = merge_profiles(stored_profile, query, recent_queries) if stored_profile or recent_queries else analyze_skin_query(query)
+            profile_concerns = _ordered_concerns(profile)
             search_query = query
         if not profile.has_minimum_signal:
             return Recommendation(
@@ -72,8 +74,8 @@ class KBeautyAgent:
         candidates = self.database.search(
             search_query,
             categories=profile.desired_categories,
-            concerns=profile.concerns,
-            ingredients=profile.preferred_ingredients,
+            concerns=profile_concerns,
+            ingredients=None,
             exclude_ingredients=[*profile.avoid_ingredients, *profile.allergies],
             require_complete_ingredients=needs_complete_ingredient_data(profile),
             limit=None,
@@ -87,8 +89,8 @@ class KBeautyAgent:
         if not top and profile.desired_categories:
             broad_candidates = self.database.search(
                 search_query,
-                concerns=profile.concerns,
-                ingredients=profile.preferred_ingredients,
+                concerns=profile_concerns,
+                ingredients=None,
                 exclude_ingredients=[*profile.avoid_ingredients, *profile.allergies],
                 require_complete_ingredients=needs_complete_ingredient_data(profile),
                 limit=None,
@@ -135,8 +137,8 @@ class KBeautyAgent:
     def similar_products(self, product, profile, *, limit: int = 5):
         similar_candidates = self.database.search(
             categories=[product.category],
-            concerns=profile.concerns,
-            ingredients=profile.preferred_ingredients,
+            concerns=_ordered_concerns(profile),
+            ingredients=None,
             exclude_ingredients=[*profile.avoid_ingredients, *profile.allergies],
             require_complete_ingredients=needs_complete_ingredient_data(profile),
             limit=None,
@@ -162,3 +164,11 @@ class KBeautyAgent:
                 selected.append(candidate)
                 seen_brands.add(brand)
         return (selected + delayed)[:limit]
+
+
+def _ordered_concerns(profile) -> list[str]:
+    ordered: list[str] = []
+    for concern in [profile.primary_concern, *profile.concerns]:
+        if concern and concern not in ordered:
+            ordered.append(concern)
+    return ordered

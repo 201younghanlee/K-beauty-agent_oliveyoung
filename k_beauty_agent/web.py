@@ -49,10 +49,11 @@ from .config import (
 )
 from .commerce import CommerceService, RedirectTokenError, disclosure_metadata
 from .database import ProductDatabase
-from .followup_parser import sanitize_profile_patch
+from .followup_parser import is_safe_cosmetic_ingredient_text, sanitize_profile_patch
 from .ingestion import sync_retailer_sources
 from .live_products import LiveProductDatabase
 from .llm import HybridExplainer, ProductReasonExplainer
+from .knowledge_base import canonical_ingredient_key
 from .localization import format_recommendation_text
 from .openai_client import OpenAIResponsesClient
 from .personalization import apply_profile_patch, build_personalization, profile_to_dict
@@ -86,6 +87,20 @@ SENSITIVE_HEALTH_INPUT_PATTERN = re.compile(
     r"|(?:알레르기|알러지|임신|임산부|수유|모유|아토피|습진|건선|피부염|질환|처방|복용|약물)",
     re.IGNORECASE,
 )
+
+
+def _request_text_values(value: object) -> list[str]:
+    """Collect every textual request field for the sensitive-data gate."""
+
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, BaseModel):
+        return _request_text_values(value.model_dump(exclude_none=True))
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in _request_text_values(item)]
+    if isinstance(value, (list, tuple, set)):
+        return [text for item in value for text in _request_text_values(item)]
+    return []
 
 
 def _close_retailer_sources(sources: list[object]) -> None:
@@ -192,7 +207,21 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class RecommendationProfileRequest(BaseModel):
-    skin_type: Literal["oily", "dry", "combination", "sensitive", "normal"]
+    skin_type: Literal["oily", "dry", "combination", "sensitive", "normal", "unknown"]
+    sensitivity_level: Literal["frequent", "occasional", "low"] | None = None
+    primary_concern: Literal[
+        "oil_control",
+        "acne",
+        "clogged_pores",
+        "hydration",
+        "barrier_support",
+        "redness",
+        "hyperpigmentation",
+        "dullness",
+        "anti_aging",
+        "texture",
+        "dryness",
+    ] | None = None
     concerns: list[
         Literal[
             "oil_control",
@@ -202,6 +231,7 @@ class RecommendationProfileRequest(BaseModel):
             "barrier_support",
             "redness",
             "hyperpigmentation",
+            "dullness",
             "anti_aging",
             "texture",
             "dryness",
@@ -211,8 +241,10 @@ class RecommendationProfileRequest(BaseModel):
         ..., min_length=1, max_length=6
     )
     avoid_ingredients: list[ProfileText] = Field(default_factory=list, max_length=12)
+    preferred_ingredients: list[ProfileText] = Field(default_factory=list, max_length=12)
     max_price_krw: int | None = Field(default=None, ge=1_000, le=2_000_000)
-    texture_preference: Literal["dewy", "lightweight", "rich", "gel"] | None = None
+    texture_preference: Literal["dewy", "lightweight", "rich", "gel", "watery", "lotion", "cream"] | None = None
+    finish_preference: Literal["fresh", "low_sticky", "moist", "glow", "matte"] | None = None
 
 
 class RecommendRequest(BaseModel):
@@ -633,6 +665,22 @@ def _recommend_v2(
                     product_to_v2_dict(similar_product, summaries.get(similar_product.id))
                 )
         item["similar_products"] = normalized_similar
+
+    profile_data = result.get("profile") if isinstance(result.get("profile"), dict) else {}
+    has_krw_budget = profile_data.get("max_price_krw") is not None or profile_data.get("min_price_krw") is not None
+    additional_candidates: list[dict[str, object]] = []
+    if has_krw_budget:
+        verified_results: list[dict[str, object]] = []
+        for item in result.get("results", []):
+            product = item.get("product") if isinstance(item, dict) else None
+            commerce_data = product.get("commerce") if isinstance(product, dict) else None
+            fresh_krw = commerce_data.get("lowest_fresh_price_krw") if isinstance(commerce_data, dict) else None
+            if fresh_krw is None:
+                additional_candidates.append(item)
+            else:
+                verified_results.append(item)
+        result["results"] = verified_results
+    result["additional_candidates"] = additional_candidates
     result["schema_version"] = 2
     result["affiliate_disclosure"] = commerce.public_catalog_status()["affiliate_disclosure"]
     result["ranking_policy"] = disclosure_metadata(False)["ranking_policy_ko"]
@@ -860,9 +908,11 @@ def admin_reload(_: None = Depends(_require_admin)) -> dict[str, object]:
 
 def _recommend(payload: RecommendRequest, request: Request, response: Response, session_id: str, *, is_follow_up: bool) -> dict[str, object]:
     _check_recommendation_rate_limit(request, session_id)
-    sensitive_input = [payload.query]
-    if payload.profile is not None:
-        sensitive_input.extend(payload.profile.avoid_ingredients)
+    # Check the natural-language query and every structured text field before
+    # creating a session. This prevents moving health text from an avoid field
+    # into a preferred ingredient (or a future ProfileText field) to bypass the
+    # separate-sensitive-consent gate.
+    sensitive_input = _request_text_values(payload)
     if SENSITIVE_HEALTH_INPUT_PATTERN.search(
         unicodedata.normalize("NFKC", " ".join(sensitive_input))
     ):
@@ -873,6 +923,26 @@ def _recommend(payload: RecommendRequest, request: Request, response: Response, 
             else "Allergy, pregnancy, and nursing information is disabled until separate sensitive-data consent is available. Enter ingredient names to avoid instead."
         )
         raise HTTPException(status_code=422, detail=detail)
+    if payload.profile is not None:
+        invalid_ingredients = [
+            value
+            for value in (*payload.profile.avoid_ingredients, *payload.profile.preferred_ingredients)
+            if not is_safe_cosmetic_ingredient_text(value)
+        ]
+        if invalid_ingredients:
+            detail = (
+                "성분명 형식만 입력해 주세요. 이메일·전화번호·URL·메모 문장은 입력할 수 없어요."
+                if payload.language == "ko"
+                else "Enter cosmetic ingredient names only. Email addresses, phone numbers, URLs, and note-like sentences are not allowed."
+            )
+            raise HTTPException(status_code=422, detail=detail)
+    if payload.profile is not None:
+        # Sanitization intentionally de-duplicates list fields. Check the raw
+        # request first so an accidental duplicate is still reported to the
+        # user instead of being silently accepted.
+        concerns = list(payload.profile.concerns)
+        if len(concerns) != len(set(concerns)):
+            _raise_profile_validation("duplicate_concerns", payload.language)
     started = time.perf_counter()
     consented = payload.privacy_consent
     if is_follow_up and not consented:
@@ -900,7 +970,10 @@ def _recommend(payload: RecommendRequest, request: Request, response: Response, 
         )
     else:
         public_profile = profile_patch
-    public_profile = _sanitize_public_profile(public_profile)
+    # Validate only after the stored profile and follow-up patch have been
+    # merged. This catches cross-turn preferred/avoid conflicts as well as
+    # conflicts inside a single structured request.
+    public_profile = _validate_public_profile(public_profile, payload.language)
     safe_query = _profile_storage_query(public_profile)
     follow_up_parser_status = "controlled_profile_only"
     recommendation = _fresh_price_agent().recommend(
@@ -1003,7 +1076,10 @@ def _fresh_price_agent() -> KBeautyAgent:
 def _structured_profile(profile: RecommendationProfileRequest | None) -> dict[str, object] | None:
     if profile is None:
         return None
-    cleaned = sanitize_profile_patch(profile.model_dump(exclude_none=True))
+    cleaned = sanitize_profile_patch(
+        profile.model_dump(exclude_none=True),
+        allow_unrecognized_ingredients=True,
+    )
     if profile.max_price_krw is not None:
         cleaned["sensitivities"] = ["budget_preference"]
     return cleaned
@@ -1019,7 +1095,59 @@ def _public_profile_patch(payload: RecommendRequest) -> dict[str, object]:
 def _sanitize_public_profile(profile: dict[str, object]) -> dict[str, object]:
     """Keep only controlled cosmetic preferences in responses and persistence."""
 
-    return sanitize_profile_patch(profile)
+    return sanitize_profile_patch(profile, allow_unrecognized_ingredients=True)
+
+
+def _validate_public_profile(profile: dict[str, object], language: str) -> dict[str, object]:
+    """Normalize and validate the final merged public cosmetic profile."""
+
+    cleaned = _sanitize_public_profile(profile)
+    primary_concern = cleaned.get("primary_concern")
+    concerns = list(cleaned.get("concerns", []))
+    if len(concerns) != len(set(concerns)):
+        _raise_profile_validation("duplicate_concerns", language)
+
+    additional_concerns = [concern for concern in concerns if concern != primary_concern]
+    if primary_concern and len(additional_concerns) > 2:
+        _raise_profile_validation("too_many_additional_concerns", language)
+
+    avoided = {canonical_ingredient_key(value) for value in cleaned.get("avoid_ingredients", [])}
+    preferred = {canonical_ingredient_key(value) for value in cleaned.get("preferred_ingredients", [])}
+    conflicts = sorted(avoided & preferred)
+    if conflicts:
+        _raise_profile_validation("ingredient_conflict", language, conflicts=conflicts)
+    return cleaned
+
+
+def _raise_profile_validation(
+    code: str,
+    language: str,
+    *,
+    conflicts: list[str] | None = None,
+) -> None:
+    korean = language == "ko"
+    if code == "duplicate_concerns":
+        detail = (
+            "피부 고민을 중복해서 선택할 수 없어요."
+            if korean
+            else "Skin concerns cannot be selected more than once."
+        )
+    elif code == "too_many_additional_concerns":
+        detail = (
+            "추가 피부 고민은 최대 2개까지 선택할 수 있어요."
+            if korean
+            else "Choose at most two additional skin concerns."
+        )
+    elif code == "ingredient_conflict":
+        names = ", ".join(conflicts or [])
+        detail = (
+            f"선호 성분과 제외 성분이 겹쳐요: {names}. 한쪽 선택을 해제해 주세요."
+            if korean
+            else f"Preferred and excluded ingredients overlap: {names}. Remove one of the selections."
+        )
+    else:  # pragma: no cover - callers use the controlled codes above.
+        detail = "프로필 선택값을 확인해 주세요." if korean else "Check the selected profile values."
+    raise HTTPException(status_code=422, detail=detail)
 
 
 def _profile_storage_query(profile: dict[str, object]) -> str:

@@ -28,8 +28,17 @@ def profile_to_dict(profile: SkinProfile) -> dict[str, Any]:
 def profile_from_dict(data: dict[str, Any] | None) -> SkinProfile:
     if not data:
         return SkinProfile()
+    skin_type = data.get("skin_type")
+    sensitivity_level = data.get("sensitivity_level")
+    if skin_type == "sensitive":
+        # Migrate the former combined skin-type value without discarding its
+        # conservative safety signal.
+        skin_type = "unknown"
+        sensitivity_level = sensitivity_level or "frequent"
     return SkinProfile(
-        skin_type=data.get("skin_type"),
+        skin_type=skin_type,
+        sensitivity_level=sensitivity_level,
+        primary_concern=data.get("primary_concern"),
         concerns=list(data.get("concerns") or []),
         desired_categories=list(data.get("desired_categories") or []),
         preferred_ingredients=list(data.get("preferred_ingredients") or []),
@@ -41,6 +50,7 @@ def profile_from_dict(data: dict[str, Any] | None) -> SkinProfile:
         min_price_usd=data.get("min_price_usd"),
         min_price_krw=data.get("min_price_krw"),
         texture_preference=data.get("texture_preference"),
+        finish_preference=data.get("finish_preference"),
         location_or_climate=data.get("location_or_climate"),
         pregnant_or_nursing=data.get("pregnant_or_nursing"),
     )
@@ -55,6 +65,10 @@ def merge_profiles(stored: dict[str, Any] | None, query: str, recent_queries: li
     for profile in (recent_profile, query_profile):
         if profile.skin_type:
             merged.skin_type = profile.skin_type
+        if profile.sensitivity_level:
+            merged.sensitivity_level = profile.sensitivity_level
+        if profile.primary_concern:
+            merged.primary_concern = profile.primary_concern
         if profile.desired_categories:
             if profile is query_profile:
                 merged.desired_categories = list(profile.desired_categories)
@@ -70,6 +84,8 @@ def merge_profiles(stored: dict[str, Any] | None, query: str, recent_queries: li
             merged.min_price_krw = profile.min_price_krw
         if profile.texture_preference:
             merged.texture_preference = profile.texture_preference
+        if profile.finish_preference:
+            merged.finish_preference = profile.finish_preference
         if profile.pregnant_or_nursing is not None:
             merged.pregnant_or_nursing = profile.pregnant_or_nursing
         for field in PROFILE_LIST_FIELDS:
@@ -95,7 +111,10 @@ def apply_profile_patch(stored: dict[str, Any] | None, patch: dict[str, Any]) ->
 
     for field in (
         "skin_type",
+        "sensitivity_level",
+        "primary_concern",
         "texture_preference",
+        "finish_preference",
         "location_or_climate",
         "pregnant_or_nursing",
         "max_price_usd",
@@ -151,11 +170,13 @@ def _refresh_uncertainty(profile: SkinProfile) -> None:
     profile.follow_up_questions = []
     if not profile.skin_type:
         profile.uncertainty.append("skin_type")
-        profile.follow_up_questions.append("What is your skin type: oily, dry, combination, sensitive, or normal?")
-    if not profile.concerns:
+        profile.follow_up_questions.append(
+            "What is your oil/moisture skin type: oily, dry, combination, normal, or unknown?"
+        )
+    if not profile.primary_concern and not profile.concerns:
         profile.uncertainty.append("concerns")
         profile.follow_up_questions.append(
             "What are your top concerns: oil control, acne, hydration, redness, pigmentation, or aging?"
         )
-    if profile.skin_type == "sensitive" and not profile.avoid_ingredients:
+    if profile.sensitivity_level == "frequent" and not profile.avoid_ingredients:
         profile.follow_up_questions.append("Are there any cosmetic ingredient names you prefer to avoid?")

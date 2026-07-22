@@ -46,6 +46,7 @@ class Product:
     positive_reviews_en: tuple[str, ...] = ()
     negative_reviews_en: tuple[str, ...] = ()
     review_source_url: str | None = None
+    review_verified_at: str | None = None
     image_url: str | None = None
     image_verified_source: str | None = None
     image_source_type: str = "none"
@@ -109,6 +110,7 @@ class Product:
             positive_reviews_en=tup("positive_reviews_en"),
             negative_reviews_en=tup("negative_reviews_en"),
             review_source_url=str(data["review_source_url"]) if data.get("review_source_url") else None,
+            review_verified_at=str(data["review_verified_at"]) if data.get("review_verified_at") else None,
             image_url=str(data["image_url"]) if data.get("image_url") else None,
             image_verified_source=str(data["image_verified_source"]) if data.get("image_verified_source") else None,
             image_source_type=str(data["image_source_type"]) if data.get("image_source_type") else "none",
@@ -166,6 +168,8 @@ class Product:
 @dataclass
 class SkinProfile:
     skin_type: str | None = None
+    sensitivity_level: str | None = None
+    primary_concern: str | None = None
     concerns: list[str] = field(default_factory=list)
     desired_categories: list[str] = field(default_factory=list)
     preferred_ingredients: list[str] = field(default_factory=list)
@@ -177,6 +181,7 @@ class SkinProfile:
     min_price_usd: float | None = None
     min_price_krw: int | None = None
     texture_preference: str | None = None
+    finish_preference: str | None = None
     location_or_climate: str | None = None
     pregnant_or_nursing: bool | None = None
     uncertainty: list[str] = field(default_factory=list)
@@ -186,6 +191,7 @@ class SkinProfile:
     def has_minimum_signal(self) -> bool:
         return bool(
             self.skin_type
+            or self.primary_concern
             or self.concerns
             or self.desired_categories
             or self.max_price_usd is not None

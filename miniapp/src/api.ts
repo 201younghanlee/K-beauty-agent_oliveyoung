@@ -2,6 +2,8 @@ import { Storage } from '@apps-in-toss/web-framework';
 import type {
   ApiErrorBody,
   CommerceSummary,
+  DataConfidence,
+  IngredientExplanation,
   Product,
   ProductExternalLink,
   RecommendationItem,
@@ -15,13 +17,14 @@ const SESSION_STORAGE_KEY = 'kBeautyAgentAnonymousSessionV1';
 const SESSION_ISSUED_AT_KEY = 'kBeautyAgentAnonymousSessionIssuedAtV1';
 const SESSION_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
 const REQUEST_TIMEOUT_MS = 60_000;
+const DELETE_TIMEOUT_MS = 12_000;
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 export const PRIVACY_POLICY_VERSION = '2026-07-20';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, '');
 
-let memorySessionToken = '';
-let memorySessionIssuedAt = 0;
+let memoryPersistentSessionToken = '';
+let memoryPersistentSessionIssuedAt = 0;
 
 function createSessionToken(): string {
   const bytes = new Uint8Array(24);
@@ -56,10 +59,15 @@ function saveBrowserSession(value: string, issuedAt: number): void {
   }
 }
 
-export async function getAnonymousSessionToken(): Promise<string> {
-  if (SESSION_PATTERN.test(memorySessionToken) && validIssuedAt(memorySessionIssuedAt)) {
-    return memorySessionToken;
+async function readPersistentSessionToken(): Promise<string | undefined> {
+  if (
+    SESSION_PATTERN.test(memoryPersistentSessionToken)
+    && validIssuedAt(memoryPersistentSessionIssuedAt)
+  ) {
+    return memoryPersistentSessionToken;
   }
+  memoryPersistentSessionToken = '';
+  memoryPersistentSessionIssuedAt = 0;
 
   try {
     const [stored, storedIssuedAt] = await Promise.all([
@@ -68,9 +76,8 @@ export async function getAnonymousSessionToken(): Promise<string> {
     ]);
     const issuedAt = Number(storedIssuedAt || 0);
     if (typeof stored === 'string' && SESSION_PATTERN.test(stored) && validIssuedAt(issuedAt)) {
-      memorySessionToken = stored;
-      memorySessionIssuedAt = issuedAt;
-      saveBrowserSession(stored, issuedAt);
+      memoryPersistentSessionToken = stored;
+      memoryPersistentSessionIssuedAt = issuedAt;
       return stored;
     }
   } catch {
@@ -78,11 +85,17 @@ export async function getAnonymousSessionToken(): Promise<string> {
   }
 
   const browserSession = readBrowserSession();
-  const useBrowserSession = SESSION_PATTERN.test(browserSession.token) && validIssuedAt(browserSession.issuedAt);
-  const token = useBrowserSession ? browserSession.token : createSessionToken();
-  const issuedAt = useBrowserSession ? browserSession.issuedAt : Date.now();
-  memorySessionToken = token;
-  memorySessionIssuedAt = issuedAt;
+  if (SESSION_PATTERN.test(browserSession.token) && validIssuedAt(browserSession.issuedAt)) {
+    memoryPersistentSessionToken = browserSession.token;
+    memoryPersistentSessionIssuedAt = browserSession.issuedAt;
+    return browserSession.token;
+  }
+  return undefined;
+}
+
+async function savePersistentSessionToken(token: string, issuedAt: number): Promise<void> {
+  memoryPersistentSessionToken = token;
+  memoryPersistentSessionIssuedAt = issuedAt;
   saveBrowserSession(token, issuedAt);
 
   try {
@@ -93,27 +106,11 @@ export async function getAnonymousSessionToken(): Promise<string> {
   } catch {
     // 네이티브 저장소를 쓸 수 없는 로컬 브라우저에서도 토큰은 유지됩니다.
   }
-  return token;
 }
 
-export function privacyPolicyUrl(): string {
-  return `${API_BASE_URL}/privacy`;
-}
-
-export async function deleteAnonymousSessionData(): Promise<void> {
-  const token = await getAnonymousSessionToken();
-  const response = await fetch(`${API_BASE_URL}/api/session`, {
-    method: 'DELETE',
-    mode: 'cors',
-    credentials: 'omit',
-    cache: 'no-store',
-    headers: { 'X-KBeauty-Session': token },
-  });
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-  memorySessionToken = '';
-  memorySessionIssuedAt = 0;
+async function clearPersistentSessionToken(): Promise<void> {
+  memoryPersistentSessionToken = '';
+  memoryPersistentSessionIssuedAt = 0;
   try {
     window.localStorage.removeItem(SESSION_STORAGE_KEY);
     window.localStorage.removeItem(SESSION_ISSUED_AT_KEY);
@@ -126,7 +123,59 @@ export async function deleteAnonymousSessionData(): Promise<void> {
       Storage.removeItem(SESSION_ISSUED_AT_KEY),
     ]);
   } catch {
-    // The server-side deletion already completed; stale local keys expire on the next rotation.
+    // Invalid or expired native keys will be ignored by readPersistentSessionToken.
+  }
+}
+
+export async function getAnonymousSessionToken(persist = true): Promise<string> {
+  if (!persist) {
+    // One-time recommendations use a request-scoped identifier only. It is not
+    // copied into memory, localStorage, sessionStorage, or Apps in Toss Storage.
+    return createSessionToken();
+  }
+
+  const existingToken = await readPersistentSessionToken();
+  if (existingToken) {
+    return existingToken;
+  }
+
+  const token = createSessionToken();
+  await savePersistentSessionToken(token, Date.now());
+  return token;
+}
+
+export function privacyPolicyUrl(): string {
+  return `${API_BASE_URL}/privacy`;
+}
+
+export async function deleteAnonymousSessionData(): Promise<void> {
+  const token = await readPersistentSessionToken();
+  if (!token) {
+    await clearPersistentSessionToken();
+    return;
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), DELETE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/session`, {
+      method: 'DELETE',
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      headers: { 'X-KBeauty-Session': token },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(await readErrorMessage(response));
+    }
+    await clearPersistentSessionToken();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('서버 삭제 요청 시간이 초과됐어요. 네트워크가 안정되면 다시 시도해 주세요.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -135,8 +184,8 @@ function buildQuery(answers: SurveyAnswers): string {
     oily: '지성',
     dry: '건성',
     combination: '복합성',
-    sensitive: '민감성',
-    normal: '보통',
+    normal: '중성',
+    unknown: '잘 모르겠음',
   };
   const categoryLabels: Record<string, string> = {
     cleanser: '클렌저',
@@ -144,6 +193,7 @@ function buildQuery(answers: SurveyAnswers): string {
     serum: '세럼',
     moisturizer: '수분크림',
     sunscreen: '선크림',
+    basic: '필요한 제품 단계 추천',
   };
   const concernLabels: Record<string, string> = {
     acne: '트러블',
@@ -154,12 +204,28 @@ function buildQuery(answers: SurveyAnswers): string {
     hyperpigmentation: '잡티',
     clogged_pores: '막힌 모공',
     dryness: '건조함',
+    dullness: '칙칙함·톤 불균일',
+    texture: '피부결·거칠음',
+    anti_aging: '탄력·잔주름',
   };
   const textureLabels: Record<string, string> = {
-    lightweight: '산뜻한',
+    watery: '워터리',
     gel: '젤',
-    dewy: '촉촉한',
-    rich: '꾸덕한',
+    lotion: '로션',
+    cream: '크림',
+    rich: '밤·리치',
+  };
+  const sensitivityLabels: Record<string, string> = {
+    frequent: '쉽게 따갑거나 붉어짐',
+    occasional: '가끔 예민해짐',
+    low: '거의 민감하지 않음',
+  };
+  const finishLabels: Record<string, string> = {
+    fresh: '산뜻함',
+    low_sticky: '끈적임 적음',
+    moist: '촉촉함',
+    glow: '쫀쫀·윤기',
+    matte: '보송함',
   };
 
   const parts = [
@@ -167,12 +233,22 @@ function buildQuery(answers: SurveyAnswers): string {
     `${categoryLabels[answers.category] ?? answers.category}(${answers.category}) 제품을 추천해줘.`,
   ];
 
+  if (answers.sensitivity) {
+    parts.push(`민감도는 ${sensitivityLabels[answers.sensitivity] ?? answers.sensitivity}(${answers.sensitivity})이야.`);
+  }
+
+  if (answers.primaryConcern) {
+    parts.push(`1순위 피부 고민은 ${concernLabels[answers.primaryConcern] ?? answers.primaryConcern}(${answers.primaryConcern})이야.`);
+  }
   if (answers.concerns.length > 0) {
     const concerns = answers.concerns.map((item) => `${concernLabels[item] ?? item}(${item})`).join(', ');
-    parts.push(`피부 고민은 ${concerns}이야.`);
+    parts.push(`추가 피부 고민은 ${concerns}이야.`);
   }
   if (answers.texture) {
     parts.push(`제형은 ${textureLabels[answers.texture] ?? answers.texture}(${answers.texture}) 타입을 선호해.`);
+  }
+  if (answers.finish) {
+    parts.push(`마무리감은 ${finishLabels[answers.finish] ?? answers.finish}(${answers.finish})을 선호해.`);
   }
   if (answers.budget) {
     parts.push(`최대 예산은 ${answers.budget}원이야.`);
@@ -187,6 +263,12 @@ function buildQuery(answers: SurveyAnswers): string {
     parts.push(`피해야 할 성분은 ${avoid.join(', ')}이야.`);
   }
 
+  const freeformPreferred = splitIngredientText(answers.preferredIngredientsText);
+  const preferred = [...new Set([...answers.preferredIngredients, ...freeformPreferred])];
+  if (preferred.length > 0) {
+    parts.push(`선호 성분은 ${preferred.join(', ')}이야. 없어도 제외하지 말고 순위에만 반영해줘.`);
+  }
+
   return parts.join(' ');
 }
 
@@ -196,15 +278,75 @@ export function buildStructuredProfile(answers: SurveyAnswers) {
     .map((item) => item.trim().slice(0, 50))
     .filter(Boolean);
   const avoidIngredients = [...new Set([...answers.avoidIngredients, ...freeformAvoid])].slice(0, 12);
+  const preferredIngredients = [...new Set([
+    ...answers.preferredIngredients,
+    ...splitIngredientText(answers.preferredIngredientsText),
+  ])].slice(0, 12);
+  const concerns = [...new Set([
+    ...(answers.primaryConcern ? [answers.primaryConcern] : []),
+    ...answers.concerns.filter((item) => item !== answers.primaryConcern),
+  ])].slice(0, 3);
 
   return {
     skin_type: answers.skinType,
-    concerns: answers.concerns,
+    ...(answers.sensitivity ? { sensitivity_level: answers.sensitivity } : {}),
+    ...(answers.primaryConcern ? { primary_concern: answers.primaryConcern } : {}),
+    concerns,
     desired_categories: answers.category ? [answers.category] : [],
     avoid_ingredients: avoidIngredients,
+    preferred_ingredients: preferredIngredients,
     ...(answers.budget ? { max_price_krw: answers.budget } : {}),
     ...(answers.texture ? { texture_preference: answers.texture } : {}),
+    ...(answers.finish ? { finish_preference: answers.finish } : {}),
   };
+}
+
+function splitIngredientText(value: string): string[] {
+  return value
+    .split(/[,，]/)
+    .map((item) => item.trim().slice(0, 50))
+    .filter(Boolean);
+}
+
+const INGREDIENT_ALIASES: Record<string, string> = {
+  '향료': 'fragrance',
+  'parfum': 'fragrance',
+  '에탄올': 'ethanol',
+  'ethyl alcohol': 'ethanol',
+  'alcohol denat.': 'ethanol',
+  'alcohol denat': 'ethanol',
+  'denatured alcohol': 'ethanol',
+  '알코올': 'alcohol',
+  '레티놀': 'retinol',
+  '레티노이드': 'retinol',
+  '살리실산': 'salicylic acid',
+  'bha': 'salicylic acid',
+  '나이아신아마이드': 'niacinamide',
+  'nicotinamide': 'niacinamide',
+  'vitamin b3': 'niacinamide',
+  '비타민 b3': 'niacinamide',
+  '히알루론산': 'hyaluronic acid',
+  '세라마이드': 'ceramide',
+  '판테놀': 'panthenol',
+  '병풀': 'centella asiatica',
+  '시카': 'centella asiatica',
+};
+
+function ingredientKey(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
+  return INGREDIENT_ALIASES[normalized] ?? normalized;
+}
+
+export function ingredientSelectionConflicts(answers: SurveyAnswers): string[] {
+  const avoided = new Map(
+    [...answers.avoidIngredients, ...splitIngredientText(answers.avoidIngredientsText)]
+      .map((item) => [ingredientKey(item), item] as const),
+  );
+  const preferred = new Map(
+    [...answers.preferredIngredients, ...splitIngredientText(answers.preferredIngredientsText)]
+      .map((item) => [ingredientKey(item), item] as const),
+  );
+  return [...preferred.keys()].filter((key) => avoided.has(key)).map((key) => preferred.get(key) || key);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -489,6 +631,7 @@ function normalizeExternalLinks(value: unknown): ProductExternalLink[] {
     'brand_official',
     'ingredient_reference',
     'data_reference',
+    'review_reference',
   ]);
   const seen = new Set<string>();
   const links: ProductExternalLink[] = [];
@@ -517,6 +660,89 @@ function normalizeExternalLinks(value: unknown): ProductExternalLink[] {
   return links;
 }
 
+function reviewUrlFromVerifiedLinks(
+  value: unknown,
+  links: ProductExternalLink[],
+): string | undefined {
+  const rawUrl = firstText(value);
+  if (!rawUrl) {
+    return undefined;
+  }
+  try {
+    const normalized = new URL(rawUrl).toString();
+    return links.find((link) => link.url === normalized)?.url;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeIngredientExplanations(value: unknown): IngredientExplanation[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((raw): IngredientExplanation[] => {
+    if (!isRecord(raw)) {
+      return [];
+    }
+    const name = firstText(raw.name);
+    const label = firstText(raw.label, raw.display_name_ko, raw.name);
+    if (!name || !label) {
+      return [];
+    }
+    return [{
+      name,
+      label,
+      displayNameKo: firstText(raw.display_name_ko) || undefined,
+      supports: asStringArray(raw.supports),
+      displaySupportsKo: asStringArray(raw.display_supports_ko),
+      cautions: asStringArray(raw.cautions),
+      displayCautionsKo: asStringArray(raw.display_cautions_ko),
+      evidenceLevel: firstText(raw.evidence_level) || undefined,
+      rationale: firstText(raw.rationale) || undefined,
+      displayRationaleKo: firstText(raw.display_rationale_ko) || undefined,
+    }];
+  }).slice(0, 30);
+}
+
+function normalizeConfidenceFactor(value: unknown) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const status = firstText(value.status);
+  const labelKo = firstText(value.label_ko, value.labelKo);
+  if (!status || !labelKo) {
+    return undefined;
+  }
+  return {
+    status,
+    labelKo,
+    checkedAt: firstText(value.checked_at, value.checkedAt) || undefined,
+    dateKind: firstText(value.date_kind, value.dateKind) || undefined,
+    sourceUrl: firstText(value.source_url, value.sourceUrl) || undefined,
+  };
+}
+
+function normalizeDataConfidence(value: unknown): DataConfidence | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const level = firstText(value.level);
+  const labelKo = firstText(value.label_ko, value.labelKo);
+  if (!['high', 'medium', 'low'].includes(level) || !labelKo) {
+    return undefined;
+  }
+  const factors = isRecord(value.factors) ? value.factors : {};
+  return {
+    level: level as DataConfidence['level'],
+    labelKo,
+    factors: {
+      ingredients: normalizeConfidenceFactor(factors.ingredients),
+      productSource: normalizeConfidenceFactor(factors.product_source ?? factors.productSource),
+      reviews: normalizeConfidenceFactor(factors.reviews),
+    },
+  };
+}
+
 function normalizeProduct(rawItem: Record<string, unknown>): Product | null {
   const nested = isRecord(rawItem.product) ? rawItem.product : rawItem;
   const id = firstText(nested.id, nested.product_id);
@@ -527,6 +753,11 @@ function normalizeProduct(rawItem: Record<string, unknown>): Product | null {
 
   const review = isRecord(nested.review) ? nested.review : {};
   const offers = normalizeV2Offers(rawItem, nested);
+  const externalLinks = normalizeExternalLinks(nested.external_links);
+  const reviewSourceUrl = reviewUrlFromVerifiedLinks(
+    firstText(nested.review_source_url, review.source_url, review.sourceUrl),
+    externalLinks,
+  );
   return {
     id,
     name,
@@ -541,18 +772,32 @@ function normalizeProduct(rawItem: Record<string, unknown>): Product | null {
     retailerName: firstText(nested.retailer_name) || undefined,
     priceKrw: asNumber(nested.price_krw ?? nested.oliveyoung_price_krw),
     priceCheckedAt: firstText(nested.price_checked_at, nested.oliveyoung_verified_at) || undefined,
-    rating: asNumber(nested.rating),
-    reviewCount: asNumber(nested.review_count),
-    reviewSummary:
-      firstText(nested.review_summary, nested.positive_review, review.summary, review.positive) || undefined,
+    rating: reviewSourceUrl ? asNumber(nested.rating) : undefined,
+    reviewCount: reviewSourceUrl ? asNumber(nested.review_count) : undefined,
+    reviewSummary: reviewSourceUrl
+      ? firstText(nested.review_summary, nested.positive_review, review.summary, review.positive) || undefined
+      : undefined,
+    reviewSourceUrl,
+    reviewVerifiedAt: reviewSourceUrl ? firstText(
+      nested.review_verified_at,
+      nested.review_checked_at,
+      review.verified_at,
+      review.checked_at,
+      review.verifiedAt,
+      review.checkedAt,
+    ) || undefined : undefined,
     ingredients: asStringArray(nested.ingredients),
+    claims: asStringArray(nested.claims),
+    concerns: asStringArray(nested.concerns),
+    textureTags: asStringArray(nested.texture_tags),
+    ingredientExplanations: normalizeIngredientExplanations(nested.ingredient_explanations),
     catalogSource: firstText(nested.catalog_source) || undefined,
     sourceUpdatedAt: firstText(nested.source_updated_at, nested.verified_at) || undefined,
     ingredientStatus: firstText(nested.ingredient_status) || undefined,
     recommendationTier: firstText(nested.recommendation_tier) || undefined,
     dataLicense: firstText(nested.data_license) || undefined,
     dataAttributionUrl: firstText(nested.data_attribution_url) || undefined,
-    externalLinks: normalizeExternalLinks(nested.external_links),
+    externalLinks,
     commerce: normalizeCommerce(nested.commerce),
     // V1 purchase URLs are informational legacy fields only. The miniapp opens
     // offers exclusively through the signed same-origin `/r/` route from V2.
@@ -609,17 +854,60 @@ function normalizeItem(value: unknown): RecommendationItem | null {
     ? asStringArray(value.display_cautions)
     : asStringArray(value.cautions);
 
+  const displayReasons = asStringArray(value.display_reasons)
+    .map(customerReason)
+    .filter(Boolean);
+
   return {
     product,
     score: asNumber(value.score),
     reason: reason || '선택한 피부 조건과 제품 정보의 적합도를 기준으로 추천했어요.',
+    reasons: displayReasons.length > 0
+      ? displayReasons
+      : [reason || '선택한 피부 조건과 제품 정보의 적합도를 기준으로 추천했어요.'],
     cautions: cautionSource.filter((caution) => !isOperationalPriceDiagnostic(caution)),
     matchedIngredients: asStringArray(value.display_matched_ingredients).length
       ? asStringArray(value.display_matched_ingredients)
       : asStringArray(value.matched_ingredients).length
         ? asStringArray(value.matched_ingredients)
         : product.ingredients.slice(0, 3),
+    missingData: asStringArray(value.missing_data).length
+      ? asStringArray(value.missing_data)
+      : asStringArray(value.display_missing_data),
+    dataConfidence: normalizeDataConfidence(value.data_confidence),
   };
+}
+
+function responseHasPriceConstraint(payload: Record<string, unknown>): boolean {
+  const profile = isRecord(payload.profile) ? payload.profile : {};
+  return [
+    profile.max_price_krw,
+    profile.maxPriceKrw,
+    profile.min_price_krw,
+    profile.minPriceKrw,
+    profile.max_price_usd,
+    profile.maxPriceUsd,
+    profile.min_price_usd,
+    profile.minPriceUsd,
+  ].some((value) => asNumber(value) !== undefined);
+}
+
+function hasMissingPrice(item: RecommendationItem): boolean {
+  return item.missingData.some((value) => {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'price' || normalized === '가격';
+  });
+}
+
+function dedupeItems(items: RecommendationItem[]): RecommendationItem[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.product.id)) {
+      return false;
+    }
+    seen.add(item.product.id);
+    return true;
+  });
 }
 
 export function normalizeResponse(payload: unknown): RecommendationResult {
@@ -632,16 +920,38 @@ export function normalizeResponse(payload: unknown): RecommendationResult {
     : Array.isArray(payload.recommendations)
       ? payload.recommendations
       : [];
-  const items = rawItems.map(normalizeItem).filter((item): item is RecommendationItem => item !== null);
+  let items = dedupeItems(
+    rawItems.map(normalizeItem).filter((item): item is RecommendationItem => item !== null),
+  );
+  const hasExplicitAdditionalCandidates = Array.isArray(payload.additional_candidates);
+  let additionalCandidates = hasExplicitAdditionalCandidates
+    ? dedupeItems(
+      (payload.additional_candidates as unknown[])
+        .map(normalizeItem)
+        .filter((item): item is RecommendationItem => item !== null),
+    )
+    : [];
+
+  if (hasExplicitAdditionalCandidates) {
+    const additionalIds = new Set(additionalCandidates.map((item) => item.product.id));
+    items = items.filter((item) => !additionalIds.has(item.product.id));
+  } else if (responseHasPriceConstraint(payload)) {
+    additionalCandidates = items.filter(hasMissingPrice);
+    items = items.filter((item) => !hasMissingPrice(item));
+  }
   const sourceStatus = isRecord(payload.product_source_status) ? payload.product_source_status : {};
   const catalogTotal = asNumber(sourceStatus.total_products);
 
   return {
-    decision: firstText(payload.decision) || (items.length > 0 ? 'recommend' : 'fallback'),
+    decision: firstText(payload.decision)
+      || (items.length > 0 || additionalCandidates.length > 0 ? 'recommend' : 'fallback'),
     summary: items.length > 0
       ? '선택한 조건을 바탕으로 제품 성분과 피부 적합도를 비교했어요.'
-      : '피해야 할 성분을 유지한 상태에서 다른 선택 조건을 조정해 다시 찾아보세요.',
+      : additionalCandidates.length > 0
+        ? '현재 가격이 확인된 제품은 없지만, 조건에 맞는 추가 후보를 찾았어요.'
+        : '피해야 할 성분을 유지한 상태에서 다른 선택 조건을 조정해 다시 찾아보세요.',
     items,
+    additionalCandidates,
     catalogTotal,
     rankingPolicy: firstText(payload.ranking_policy, payload.rankingPolicy) || undefined,
   };
@@ -693,7 +1003,11 @@ export async function requestRecommendations(answers: SurveyAnswers): Promise<Re
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const sessionToken = await getAnonymousSessionToken();
+    const conflicts = ingredientSelectionConflicts(answers);
+    if (conflicts.length > 0) {
+      throw new Error(`선호 성분과 제외 성분이 겹쳐요: ${conflicts.join(', ')}. 한쪽 선택을 해제해 주세요.`);
+    }
+    const sessionToken = await getAnonymousSessionToken(answers.privacyConsent);
     const body = JSON.stringify({
       query: buildQuery(answers),
       limit: 5,
@@ -742,13 +1056,14 @@ export async function requestProductOffers(productId: string): Promise<RetailOff
   const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const sessionToken = await getAnonymousSessionToken();
+    const sessionToken = await readPersistentSessionToken();
+    const headers = sessionToken ? { 'X-KBeauty-Session': sessionToken } : undefined;
     const response = await fetch(`${API_BASE_URL}/api/v2/products/${encodeURIComponent(productId)}/offers`, {
       method: 'GET',
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
-      headers: { 'X-KBeauty-Session': sessionToken },
+      headers,
       signal: controller.signal,
     });
     if (!response.ok) {

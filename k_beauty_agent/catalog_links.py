@@ -12,6 +12,7 @@ CatalogLinkKind = Literal[
     "brand_official",
     "ingredient_reference",
     "data_reference",
+    "review_reference",
 ]
 
 
@@ -90,17 +91,25 @@ def catalog_links(product: Product) -> list[CatalogLink]:
         ("data_attribution_url", product.data_attribution_url),
     )
     links: list[CatalogLink] = []
-    seen_urls: set[str] = set()
+    seen_links: set[tuple[CatalogLinkKind, str]] = set()
     for source_field, raw_url in candidates:
         safe_url = _safe_https_url(raw_url)
-        if not safe_url or safe_url in seen_urls:
+        if not safe_url:
             continue
         host = _host(safe_url)
         if not host:
             continue
 
         retailer = _RETAILERS.get(host)
-        if retailer:
+        if source_field == "review_source_url" and retailer:
+            link = CatalogLink(
+                "review_reference",
+                f"리뷰 정보 · {retailer}",
+                retailer,
+                safe_url,
+                source_field,
+            )
+        elif retailer:
             link = CatalogLink("retailer", retailer, retailer, safe_url, source_field)
         elif host in _BRAND_HOSTS.get(product.brand.strip().casefold(), frozenset()):
             link = CatalogLink(
@@ -116,7 +125,10 @@ def catalog_links(product: Product) -> list[CatalogLink]:
         else:
             continue
 
-        seen_urls.add(safe_url)
+        link_key = (link.kind, safe_url)
+        if link_key in seen_links:
+            continue
+        seen_links.add(link_key)
         links.append(link)
     return links
 

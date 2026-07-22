@@ -1276,7 +1276,11 @@ def _offer_summary(product_id: str, offers: list[dict[str, Any]]) -> dict[str, A
     priced = [
         offer
         for offer in fresh
-        if offer["price"]["amount"] is not None and offer["price"]["currency"] == "KRW"
+        if (
+            offer["price"]["amount"] is not None
+            and offer["price"]["currency"] == "KRW"
+            and offer["stock_status"] != "out_of_stock"
+        )
     ]
     best = min(priced, key=lambda offer: offer["price"]["amount"]) if priced else None
     best_price = best["price"]["amount"] if best else None
@@ -1306,7 +1310,12 @@ def _summary_from_rows(product_id: str, rows: list[sqlite3.Row], now: int) -> di
     priced = [
         row
         for row, status in zip(rows, freshness)
-        if status == "fresh" and row["price_amount"] is not None and row["currency"] == "KRW"
+        if (
+            status == "fresh"
+            and row["price_amount"] is not None
+            and row["currency"] == "KRW"
+            and row["stock_status"] != "out_of_stock"
+        )
     ]
     best = min(priced, key=lambda row: row["price_amount"]) if priced else None
     best_price = best["price_amount"] if best else None
