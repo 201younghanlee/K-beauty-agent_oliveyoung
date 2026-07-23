@@ -32,29 +32,152 @@ MAX_CACHE_ENTRIES = 512
 YOUTUBE_QUOTA_TIMEZONE = ZoneInfo("America/Los_Angeles")
 YOUTUBE_QUOTA_SERVICE = "youtube_search"
 GENERIC_PRODUCT_TERMS = {
+    "acid",
+    "advanced",
     "ampoule",
+    "barrier",
+    "care",
+    "clean",
     "cleanser",
+    "cleansing",
+    "clear",
+    "concentrate",
+    "concentrated",
+    "correcting",
     "cream",
+    "dark",
     "essence",
+    "fit",
+    "foam",
     "gel",
+    "good",
+    "green",
+    "high",
+    "intensive",
     "lotion",
+    "low",
+    "mild",
+    "moisture",
+    "moisturizing",
     "moisturizer",
+    "original",
+    "power",
+    "pure",
+    "red",
     "review",
     "serum",
     "skin",
     "skincare",
     "soothing",
+    "sun",
     "sunscreen",
     "toner",
+    "water",
+    "watery",
+    "사용",
     "후기",
     "리뷰",
+    "로션",
+    "보습",
     "세럼",
+    "선스크린",
+    "선크림",
     "스킨",
     "앰플",
     "에센스",
+    "젤",
     "크림",
+    "클렌징",
     "클렌저",
     "토너",
+    "폼",
+}
+REVIEW_INTENT_TERMS = {
+    "comparison",
+    "empties",
+    "empty",
+    "experience",
+    "favorite",
+    "favorites",
+    "honest",
+    "impression",
+    "impressions",
+    "recommend",
+    "review",
+    "reviewed",
+    "reviewing",
+    "reviews",
+    "routine",
+    "test",
+    "tested",
+    "testing",
+    "thoughts",
+    "tried",
+    "try",
+    "used",
+    "versus",
+    "vs",
+    "공병",
+    "리뷰",
+    "발라봄",
+    "발라본",
+    "비교",
+    "사용기",
+    "사용후기",
+    "솔직",
+    "써봄",
+    "써본",
+    "써봤",
+    "일주일",
+    "첫인상",
+    "추천",
+    "테스트",
+    "한달",
+    "후기",
+}
+CATEGORY_MATCH_TERMS = {
+    "cleanser": {
+        "cleanser",
+        "cleansing",
+        "facewash",
+        "foam",
+        "wash",
+        "세안",
+        "클렌저",
+        "클렌징",
+        "폼",
+    },
+    "moisturizer": {
+        "cream",
+        "lotion",
+        "moisturizer",
+        "moisturizing",
+        "로션",
+        "보습",
+        "수분크림",
+        "크림",
+    },
+    "serum": {
+        "ampoule",
+        "essence",
+        "serum",
+        "세럼",
+        "앰플",
+        "에센스",
+    },
+    "sunscreen": {
+        "spf",
+        "sun",
+        "suncream",
+        "sunscreen",
+        "자외선",
+        "선스크린",
+        "선크림",
+    },
+    "toner": {
+        "toner",
+        "토너",
+    },
 }
 
 
@@ -72,6 +195,15 @@ class YouTubeQuotaExceededError(RuntimeError):
 class _CacheEntry:
     expires_at: float
     payload: dict[str, object]
+
+
+@dataclass(frozen=True)
+class _ProductMatchProfile:
+    brand_groups: tuple[tuple[str, ...], ...]
+    product_terms: frozenset[str]
+    full_name_phrases: tuple[str, ...]
+    product_name_phrases: tuple[str, ...]
+    category_terms: frozenset[str]
 
 
 class YouTubeReviewService:
@@ -168,7 +300,10 @@ class YouTubeReviewService:
                     }
 
                 try:
-                    search_items = self._search(query, 5)
+                    # A wider first page does not consume another search.list
+                    # call. It offsets the stricter local relevance filter while
+                    # keeping the daily search quota usage unchanged.
+                    search_items = self._search(query, 10)
                     videos = self._video_details(search_items, product)[:3]
                 except YouTubeQuotaExceededError:
                     self._exhaust_search_quota()
@@ -257,7 +392,7 @@ class YouTubeReviewService:
                 "id": ",".join(search_by_id),
                 "fields": (
                     "items(id,snippet(title,channelId,channelTitle,publishedAt,thumbnails),"
-                    "status(privacyStatus,embeddable),contentDetails/duration,"
+                    "status(privacyStatus,embeddable,madeForKids),contentDetails/duration,"
                     "paidProductPlacementDetails/hasPaidProductPlacement,"
                     "statistics(viewCount,likeCount))"
                 ),
@@ -280,6 +415,11 @@ class YouTubeReviewService:
                 and VIDEO_ID_PATTERN.fullmatch(video_id)
                 and status.get("privacyStatus") == "public"
                 and status.get("embeddable") is True
+                # The YouTube policies require the MFK status to be checked for
+                # every embed. This client does not implement child-directed
+                # player tracking controls, so fail closed for MFK or unknown
+                # status rather than embedding it.
+                and status.get("madeForKids") is False
             ):
                 details_by_id[video_id] = item
 
@@ -327,6 +467,9 @@ class YouTubeReviewService:
             like_count = _non_negative_int(statistics.get("likeCount"))
             if like_count is not None:
                 video["like_count"] = like_count
+            # Preserve the ordering returned by YouTube search. The local
+            # eligibility check only removes clear false positives and never
+            # creates a score or re-ranks API results.
             videos.append(video)
 
         channel_ids = [
@@ -488,16 +631,29 @@ def _limited_payload(payload: dict[str, object], limit: int) -> dict[str, object
 
 
 def _review_query(product: Product) -> str:
-    names = [product.brand, product.display_name_ko or "", product.name]
+    names = [product.display_name_ko or "", product.name, product.brand]
     unique: list[str] = []
     seen: set[str] = set()
     for raw in names:
         value = " ".join(str(raw).split())
         key = value.casefold()
-        if value and key not in seen:
+        if not value or key in seen:
+            continue
+        # Product names in this catalog generally include the brand already.
+        # Avoid repeating a standalone brand, which can broaden the search
+        # toward unrelated products from the same company.
+        compact_value = _normalized_match_text(value)
+        if value == product.brand and any(
+            compact_value and compact_value in _normalized_match_text(existing)
+            for existing in unique
+        ):
+            continue
+        if value:
             seen.add(key)
             unique.append(value)
-    return (" ".join(unique) + " 사용 후기 리뷰").strip()[:240]
+    suffix = " 솔직 사용 후기 review"
+    names_text = " ".join(unique)
+    return f"{names_text[: 240 - len(suffix)].rstrip()}{suffix}"
 
 
 def _search_url(query: str) -> str:
@@ -607,17 +763,139 @@ def _normalized_match_text(value: object) -> str:
     return "".join(re.findall(r"[0-9A-Za-z가-힣]+", html.unescape(value).casefold()))
 
 
-def _product_match_terms(product: Product) -> tuple[str, set[str]]:
-    brand = _normalized_match_text(product.brand)
-    terms: set[str] = set()
-    for value in (product.name, product.display_name_ko or ""):
-        for token in re.findall(r"[0-9A-Za-z가-힣]+", str(value).casefold()):
-            normalized = _normalized_match_text(token)
-            if len(normalized) >= 3 and normalized not in GENERIC_PRODUCT_TERMS:
-                terms.add(normalized)
-    if brand:
-        terms.discard(brand)
-    return brand, terms
+def _match_tokens(value: object) -> tuple[str, ...]:
+    if not isinstance(value, str):
+        return ()
+    return tuple(re.findall(r"[0-9A-Za-z가-힣]+", html.unescape(value).casefold()))
+
+
+def _starts_with_tokens(tokens: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
+    return bool(prefix) and len(tokens) >= len(prefix) and tokens[: len(prefix)] == prefix
+
+
+def _meaningful_product_term(token: str) -> bool:
+    if token in GENERIC_PRODUCT_TERMS:
+        return False
+    if token.isascii() and token.isdigit():
+        return len(token) >= 2
+    if re.search(r"[가-힣]", token):
+        return len(token) >= 2
+    return len(token) >= 3
+
+
+def _product_match_profile(product: Product) -> _ProductMatchProfile:
+    brand_tokens = _match_tokens(product.brand)
+    brand_groups: list[tuple[str, ...]] = [brand_tokens] if brand_tokens else []
+    product_terms: set[str] = set()
+    full_name_phrases: list[str] = []
+    product_name_phrases: list[str] = []
+
+    for value, localized in (
+        (product.name, False),
+        (product.display_name_ko or "", True),
+    ):
+        tokens = _match_tokens(value)
+        if not tokens:
+            continue
+        full_phrase = "".join(tokens)
+        if len(full_phrase) >= 6 and full_phrase not in full_name_phrases:
+            full_name_phrases.append(full_phrase)
+
+        remaining = tokens
+        if _starts_with_tokens(tokens, brand_tokens):
+            remaining = tokens[len(brand_tokens) :]
+        elif (
+            localized
+            and len(tokens) >= 2
+            and re.search(r"[가-힣]", tokens[0])
+            and tokens[0] not in GENERIC_PRODUCT_TERMS
+        ):
+            localized_brand = (tokens[0],)
+            if localized_brand not in brand_groups:
+                brand_groups.append(localized_brand)
+            remaining = tokens[1:]
+
+        product_phrase = "".join(remaining)
+        if len(remaining) >= 2 and len(product_phrase) >= 6:
+            if product_phrase not in product_name_phrases:
+                product_name_phrases.append(product_phrase)
+        for token in remaining:
+            if _meaningful_product_term(token):
+                product_terms.add(token)
+
+    for brand_group in brand_groups:
+        product_terms.difference_update(brand_group)
+    category_terms = frozenset(CATEGORY_MATCH_TERMS.get(product.category.casefold(), set()))
+    return _ProductMatchProfile(
+        brand_groups=tuple(brand_groups),
+        product_terms=frozenset(product_terms),
+        full_name_phrases=tuple(full_name_phrases),
+        product_name_phrases=tuple(product_name_phrases),
+        category_terms=category_terms,
+    )
+
+
+def _term_present(term: str, tokens: set[str], compact_values: tuple[str, ...]) -> bool:
+    if term in tokens:
+        return True
+    if re.search(r"[가-힣]", term):
+        return any(term in compact for compact in compact_values)
+    return False
+
+
+def _group_present(
+    group: tuple[str, ...],
+    tokens: set[str],
+    compact_values: tuple[str, ...],
+) -> bool:
+    if not group:
+        return False
+    if len(group) == 1:
+        return _term_present(group[0], tokens, compact_values)
+    phrase = "".join(group)
+    return any(phrase in compact for compact in compact_values)
+
+
+def _has_review_intent(values: tuple[object, ...]) -> bool:
+    tokens = {
+        token
+        for value in values
+        for token in _match_tokens(value)
+    }
+    compact_values = tuple(
+        compact
+        for compact in (_normalized_match_text(value) for value in values)
+        if compact
+    )
+    return any(
+        _term_present(term, tokens, compact_values)
+        for term in REVIEW_INTENT_TERMS
+    )
+
+
+def _has_conflicting_category(
+    category_terms: frozenset[str],
+    title_tokens: set[str],
+    title_compacts: tuple[str, ...],
+) -> bool:
+    if not category_terms:
+        return False
+    target_present = any(
+        _term_present(term, title_tokens, title_compacts)
+        for term in category_terms
+    )
+    if target_present:
+        return False
+    competing_terms = {
+        term
+        for terms in CATEGORY_MATCH_TERMS.values()
+        for term in terms
+        if term not in category_terms
+    }
+    return any(
+        _term_present(term, title_tokens, title_compacts)
+        for term in competing_terms
+    )
 
 
 def _is_product_related(
@@ -625,20 +903,81 @@ def _is_product_related(
     details_snippet: dict[str, Any],
     search_snippet: dict[str, Any],
 ) -> bool:
-    haystack = _normalized_match_text(
-        " ".join(
-            str(value)
-            for value in (
-                details_snippet.get("title"),
-                details_snippet.get("channelTitle"),
-                search_snippet.get("title"),
-                search_snippet.get("description"),
-                search_snippet.get("channelTitle"),
-            )
-            if value
-        )
+    title_values = (
+        details_snippet.get("title"),
+        search_snippet.get("title"),
     )
-    brand, terms = _product_match_terms(product)
-    if brand and len(brand) >= 3 and brand in haystack:
+    title_tokens = {
+        token
+        for value in title_values
+        for token in _match_tokens(value)
+    }
+    title_compacts = tuple(
+        compact
+        for compact in (_normalized_match_text(value) for value in title_values)
+        if compact
+    )
+    if not title_compacts:
+        return False
+
+    profile = _product_match_profile(product)
+    if not profile.product_terms and not profile.product_name_phrases:
+        # A catalog row containing only a brand cannot be distinguished from
+        # brand-wide videos, so prefer no card over a misleading match.
+        return False
+    if _has_conflicting_category(profile.category_terms, title_tokens, title_compacts):
+        return False
+
+    # Descriptions can establish that this is a review/use video, but cannot
+    # establish product identity by themselves. This avoids SEO tag lists and
+    # channel names pulling unrelated videos into the results.
+    title_has_review_intent = _has_review_intent(title_values)
+    if not title_has_review_intent and not _has_review_intent(
+        (search_snippet.get("description"),)
+    ):
+        return False
+
+    full_name_match = any(
+        phrase in compact
+        for phrase in profile.full_name_phrases
+        for compact in title_compacts
+    )
+    if full_name_match:
         return True
-    return any(term in haystack for term in terms)
+
+    product_phrase_match = any(
+        phrase in compact
+        for phrase in profile.product_name_phrases
+        for compact in title_compacts
+    )
+    if product_phrase_match:
+        return True
+
+    brand_match = any(
+        _group_present(group, title_tokens, title_compacts)
+        for group in profile.brand_groups
+    )
+    matched_terms = {
+        term
+        for term in profile.product_terms
+        if _term_present(term, title_tokens, title_compacts)
+    }
+    matched_named_terms = {
+        term
+        for term in matched_terms
+        if not term.isdigit()
+    }
+    category_match = any(
+        _term_present(term, title_tokens, title_compacts)
+        for term in profile.category_terms
+    )
+    if brand_match and matched_named_terms:
+        return True
+    if len(matched_named_terms) >= 2:
+        return True
+
+    # Numeric edition names (for example 1025 or 77) are only meaningful with
+    # a matching product category. A number by itself is too collision-prone.
+    if brand_match and matched_terms and category_match:
+        return True
+    return False

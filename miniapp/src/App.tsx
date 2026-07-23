@@ -1,5 +1,5 @@
 import { graniteEvent } from '@apps-in-toss/web-framework';
-import { ArrowSquareOut, Eye, Play, ThumbsUp } from '@phosphor-icons/react';
+import { Eye, ThumbsUp } from '@phosphor-icons/react';
 import {
   useCallback,
   useEffect,
@@ -25,6 +25,7 @@ import { routeAnnouncement, type AppScreen } from './accessibility';
 import type {
   Product,
   ProductExternalLink,
+  ProductVideoReview,
   ProductVideoReviews,
   RecommendationItem,
   RecommendationResult,
@@ -32,6 +33,7 @@ import type {
   SurveyAnswers,
 } from './types';
 import { useSafeAreaInsets } from './useSafeArea';
+import { youtubePrivacyEnhancedEmbedUrl } from './youtube';
 
 const LEGACY_SAVED_STORAGE_KEY = 'kBeautyAgentSavedProductsV1';
 const SAVED_IDS_STORAGE_KEY = 'kBeautyAgentSavedProductIdsV2';
@@ -735,6 +737,59 @@ function videoCountLabel(value?: number): string {
   return new Intl.NumberFormat('ko-KR').format(value);
 }
 
+interface InlineYouTubePlayerProps {
+  video: ProductVideoReview;
+  productName: string;
+  onOpen: (url: string) => void;
+}
+
+function InlineYouTubePlayer({
+  video,
+  productName,
+  onOpen,
+}: InlineYouTubePlayerProps) {
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  if (failed) {
+    return (
+      <div className="video-review-player-fallback" role="alert">
+        <strong>영상을 이 화면에서 불러오지 못했어요.</strong>
+        <p>네트워크 상태를 확인한 뒤 다시 시도해 주세요.</p>
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              setAttempt((value) => value + 1);
+              setFailed(false);
+            }}
+          >
+            다시 불러오기
+          </button>
+          <button type="button" onClick={() => onOpen(video.url)}>
+            YouTube에서 열기
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="video-review-player">
+      <iframe
+        key={attempt}
+        src={youtubePrivacyEnhancedEmbedUrl(video.videoId)}
+        title={`${productName} · ${video.title} · ${video.channelTitle} YouTube 영상`}
+        loading="lazy"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+        allowFullScreen
+        referrerPolicy="strict-origin-when-cross-origin"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
+
 interface VideoReviewSectionProps {
   product: Product;
   productName: string;
@@ -877,40 +932,16 @@ function VideoReviewSection({
               <div className="video-review-list">
                 {reviews.videos.map((video) => (
                   <article key={video.videoId} className="video-review-item">
-                    <button
-                      type="button"
-                      className="video-review-preview"
-                      onClick={() => onOpen(video.url)}
-                      aria-label={`${productName}, ${video.channelTitle} 영상을 YouTube에서 보기`}
-                    >
-                      {video.thumbnailUrl ? (
-                        <img
-                          className="video-review-thumbnail"
-                          src={video.thumbnailUrl}
-                          alt=""
-                          loading={priority ? 'eager' : 'lazy'}
-                          decoding="async"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <span className="video-review-thumbnail-fallback" aria-hidden="true">
-                          YouTube
-                        </span>
-                      )}
-                      <span className="video-review-preview-shade" aria-hidden="true" />
-                      <span className="video-review-preview-title">
-                        <b>{video.title}</b>
-                        <small>{video.channelTitle}</small>
-                      </span>
-                      {video.hasPaidProductPlacement && (
-                        <span className="paid-promotion-badge">유료 프로모션 포함</span>
-                      )}
-                      <span className="video-review-play" aria-hidden="true">
-                        <Play weight="fill" />
-                      </span>
-                    </button>
+                    <InlineYouTubePlayer
+                      video={video}
+                      productName={productName}
+                      onOpen={onOpen}
+                    />
 
                     <div className="video-review-stats" aria-label="영상 공개 정보">
+                      {video.hasPaidProductPlacement && (
+                        <span className="paid-promotion-label">유료 프로모션 포함</span>
+                      )}
                       {video.viewCount !== undefined && (
                         <span>
                           <Eye weight="regular" aria-hidden="true" />
@@ -956,15 +987,6 @@ function VideoReviewSection({
                           </small>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        className="video-review-watch"
-                        onClick={() => onOpen(video.url)}
-                        aria-label={`${productName}, ${video.channelTitle} 영상을 YouTube에서 보기`}
-                      >
-                        <ArrowSquareOut weight="bold" aria-hidden="true" />
-                        영상 보러가기
-                      </button>
                     </div>
                   </article>
                 ))}
