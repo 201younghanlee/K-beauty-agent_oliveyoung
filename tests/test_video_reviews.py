@@ -8,10 +8,15 @@ from fastapi.testclient import TestClient
 from k_beauty_agent import web
 from k_beauty_agent.models import Product
 from k_beauty_agent.storage import SQLiteStore
-from k_beauty_agent.video_reviews import YouTubeReviewService
+from k_beauty_agent.video_reviews import (
+    YouTubeReviewService,
+    _is_product_related,
+    _review_query,
+)
 
 
 CHANNEL_ID = "UCabcdefghijklmnopqrstuv"
+OTHER_CHANNEL_ID = "UCbbbbbbbbbbbbbbbbbbbbbb"
 
 
 def _product() -> Product:
@@ -42,6 +47,159 @@ def test_without_api_key_returns_safe_product_specific_youtube_search() -> None:
     service.close()
 
 
+def test_review_query_keeps_bilingual_product_names_without_repeating_brand() -> None:
+    query = _review_query(_product())
+
+    assert "라운드랩 1025 독도 클렌저" in query
+    assert "Round Lab 1025 Dokdo Cleanser" in query
+    assert query.count("Round Lab") == 1
+    assert query.endswith("솔직 사용 후기 review")
+    assert len(query) <= 240
+
+
+def test_relevance_filter_requires_product_identity_and_review_intent() -> None:
+    product = Product(
+        id="cosrx-low-ph-good-morning-gel-cleanser",
+        name="COSRX Low pH Good Morning Gel Cleanser",
+        display_name_ko="COSRX 약산성 굿모닝 젤 클렌저",
+        brand="COSRX",
+        category="cleanser",
+        country="Korea",
+        ingredients=("Glycerin",),
+    )
+
+    def related(title: str, description: str = "") -> bool:
+        return _is_product_related(
+            product,
+            {"title": title, "channelTitle": "Creator"},
+            {"title": title, "description": description, "channelTitle": "Creator"},
+        )
+
+    assert related("COSRX Low pH Good Morning Gel Cleanser honest review")
+    assert related("코스알엑스 약산성 굿모닝 젤 클렌저 솔직 사용 후기")
+    assert related("Low pH Good Morning Gel Cleanser 30-day review")
+    assert related("COSRX Low pH Good Morning Gel Cleanser 스킨케어 솔직 후기")
+
+    # These are representative production false positives: brand-wide videos,
+    # a generic low-pH cleanser from another brand, and a different COSRX line.
+    assert not related("i tried everything from COSRX | honest review")
+    assert not related("[COSRX] Best Sellers review")
+    assert not related("빈스캐빈 약산성 클렌저 솔직 후기")
+    assert not related("COSRX Low pH Cleanser review")
+    assert not related("COSRX Snail Mucin Essence review")
+    assert not related(
+        "2026 skincare haul honest review",
+        "COSRX Low pH Good Morning Gel Cleanser 약산성 굿모닝 클렌저",
+    )
+    assert not related("COSRX Low pH Good Morning Gel Cleanser official commercial")
+
+
+def test_relevance_filter_rejects_same_family_wrong_category() -> None:
+    assert _is_product_related(
+        _product(),
+        {"title": "Round Lab 1025 Dokdo Cleanser honest review"},
+        {"title": "Round Lab 1025 Dokdo Cleanser honest review"},
+    )
+    assert not _is_product_related(
+        _product(),
+        {"title": "Round Lab 1025 Dokdo Toner honest review"},
+        {"title": "Round Lab 1025 Dokdo Toner honest review"},
+    )
+    assert not _is_product_related(
+        _product(),
+        {"title": "Round Lab Birch Juice Sunscreen honest review"},
+        {"title": "Round Lab Birch Juice Sunscreen honest review"},
+    )
+    brand_only_product = Product(
+        id="embryolisse",
+        name="Embryolisse",
+        display_name_ko=None,
+        brand="Embryolisse",
+        category="moisturizer",
+        country="France",
+        ingredients=(),
+    )
+    assert not _is_product_related(
+        brand_only_product,
+        {"title": "Everything from Embryolisse honest review"},
+        {"title": "Everything from Embryolisse honest review"},
+    )
+
+
+def test_relevance_filter_preserves_youtube_search_order() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/videos")
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "id": "partial0001",
+                        "snippet": {
+                            "title": "Round Lab Dokdo Cleanser review",
+                            "channelTitle": "Creator",
+                        },
+                        "status": {
+                            "privacyStatus": "public",
+                            "embeddable": True,
+                            "madeForKids": False,
+                        },
+                    },
+                    {
+                        "id": "exactfull01",
+                        "snippet": {
+                            "title": "Round Lab 1025 Dokdo Cleanser honest review",
+                            "channelTitle": "Creator",
+                        },
+                        "status": {
+                            "privacyStatus": "public",
+                            "embeddable": True,
+                            "madeForKids": False,
+                        },
+                    },
+                    {
+                        "id": "madeforkid1",
+                        "snippet": {
+                            "title": "Round Lab 1025 Dokdo Cleanser honest review",
+                            "channelTitle": "Kids Creator",
+                        },
+                        "status": {
+                            "privacyStatus": "public",
+                            "embeddable": True,
+                            "madeForKids": True,
+                        },
+                    },
+                    {
+                        "id": "unknownmfk1",
+                        "snippet": {
+                            "title": "Round Lab 1025 Dokdo Cleanser honest review",
+                            "channelTitle": "Unknown Creator",
+                        },
+                        "status": {
+                            "privacyStatus": "public",
+                            "embeddable": True,
+                        },
+                    },
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    service = YouTubeReviewService("key", client=client)
+    videos = service._video_details(
+        [
+            {"id": {"videoId": "partial0001"}, "snippet": {}},
+            {"id": {"videoId": "exactfull01"}, "snippet": {}},
+            {"id": {"videoId": "madeforkid1"}, "snippet": {}},
+            {"id": {"videoId": "unknownmfk1"}, "snippet": {}},
+        ],
+        _product(),
+    )
+
+    assert [video["video_id"] for video in videos] == ["partial0001", "exactfull01"]
+    client.close()
+
+
 def test_api_results_are_verified_enriched_and_cached() -> None:
     calls: list[httpx.Request] = []
 
@@ -55,6 +213,7 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
             assert request.url.params["videoSyndicated"] == "true"
             assert request.url.params["safeSearch"] == "strict"
             assert "Round Lab" in request.url.params["q"]
+            assert request.url.params["maxResults"] == "10"
             assert "channelId" in request.url.params["fields"]
             return httpx.Response(
                 200,
@@ -62,6 +221,7 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
                     "items": [
                         {"id": {"videoId": "abcDEF_123-"}, "snippet": {}},
                         {"id": {"videoId": "noembed_123"}, "snippet": {}},
+                        {"id": {"videoId": "wrongprod01"}, "snippet": {}},
                         {"id": {"videoId": "private1234"}, "snippet": {}},
                     ]
                 },
@@ -70,6 +230,7 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
             assert "statistics" in request.url.params["part"]
             assert "channelId" in request.url.params["fields"]
             assert "viewCount" in request.url.params["fields"]
+            assert "madeForKids" in request.url.params["fields"]
             return httpx.Response(
                 200,
                 json={
@@ -77,7 +238,7 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
                         {
                             "id": "abcDEF_123-",
                             "snippet": {
-                                "title": "I used Round Lab &amp; here is my review",
+                                "title": "I used Round Lab 1025 Dokdo Cleanser &amp; here is my review",
                                 "channelId": CHANNEL_ID,
                                 "channelTitle": "Skin Creator",
                                 "publishedAt": "2026-07-01T01:02:03Z",
@@ -87,7 +248,11 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
                                     }
                                 },
                             },
-                            "status": {"privacyStatus": "public", "embeddable": True},
+                            "status": {
+                                "privacyStatus": "public",
+                                "embeddable": True,
+                                "madeForKids": False,
+                            },
                             "contentDetails": {"duration": "PT8M12S"},
                             "paidProductPlacementDetails": {"hasPaidProductPlacement": True},
                             "statistics": {"viewCount": "50752", "likeCount": "1882"},
@@ -95,16 +260,37 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
                         {
                             "id": "noembed_123",
                             "snippet": {
-                                "title": "Round Lab review that cannot be embedded",
+                                "title": "Round Lab Dokdo Cleanser review that cannot be embedded",
                                 "channelId": CHANNEL_ID,
                                 "channelTitle": "Skin Creator",
                             },
-                            "status": {"privacyStatus": "public", "embeddable": False},
+                            "status": {
+                                "privacyStatus": "public",
+                                "embeddable": False,
+                                "madeForKids": False,
+                            },
+                        },
+                        {
+                            "id": "wrongprod01",
+                            "snippet": {
+                                "title": "Round Lab Birch Juice Sunscreen honest review",
+                                "channelId": OTHER_CHANNEL_ID,
+                                "channelTitle": "Skin Creator",
+                            },
+                            "status": {
+                                "privacyStatus": "public",
+                                "embeddable": True,
+                                "madeForKids": False,
+                            },
                         },
                         {
                             "id": "private1234",
                             "snippet": {"title": "Private", "channelTitle": "Hidden"},
-                            "status": {"privacyStatus": "private", "embeddable": True},
+                            "status": {
+                                "privacyStatus": "private",
+                                "embeddable": True,
+                                "madeForKids": False,
+                            },
                         },
                     ]
                 },
@@ -147,7 +333,7 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
     assert first["videos"] == [
         {
             "video_id": "abcDEF_123-",
-            "title": "I used Round Lab & here is my review",
+            "title": "I used Round Lab 1025 Dokdo Cleanser & here is my review",
             "channel_title": "Skin Creator",
             "published_at": "2026-07-01T01:02:03Z",
             "duration": "PT8M12S",
@@ -178,7 +364,7 @@ def test_malformed_thumbnail_and_upstream_failure_fail_closed() -> None:
                         {
                             "id": "abcDEF_123-",
                             "snippet": {
-                                "title": "Round Lab Review",
+                                "title": "Round Lab Dokdo Cleanser Review",
                                 "channelId": CHANNEL_ID,
                                 "channelTitle": "Creator",
                                 "thumbnails": {
@@ -191,7 +377,11 @@ def test_malformed_thumbnail_and_upstream_failure_fail_closed() -> None:
                                 "viewCount": "-1",
                                 "likeCount": "9" * 5_000,
                             },
-                            "status": {"privacyStatus": "public", "embeddable": True},
+                            "status": {
+                                "privacyStatus": "public",
+                                "embeddable": True,
+                                "madeForKids": False,
+                            },
                         }
                     ]
                 },
@@ -254,12 +444,16 @@ def test_channel_lookup_failure_preserves_verified_video_and_statistics() -> Non
                         {
                             "id": "abcDEF_123-",
                             "snippet": {
-                                "title": "Round Lab Review",
+                                "title": "Round Lab Dokdo Cleanser Review",
                                 "channelId": CHANNEL_ID,
                                 "channelTitle": "Creator",
                             },
                             "statistics": {"viewCount": "12", "likeCount": "3"},
-                            "status": {"privacyStatus": "public", "embeddable": True},
+                            "status": {
+                                "privacyStatus": "public",
+                                "embeddable": True,
+                                "madeForKids": False,
+                            },
                         }
                     ]
                 },
@@ -274,7 +468,7 @@ def test_channel_lookup_failure_preserves_verified_video_and_statistics() -> Non
     assert result["videos"] == [
         {
             "video_id": "abcDEF_123-",
-            "title": "Round Lab Review",
+            "title": "Round Lab Dokdo Cleanser Review",
             "channel_title": "Creator",
             "published_at": None,
             "duration": None,
@@ -305,11 +499,15 @@ def test_invalid_channel_id_is_not_requested_or_exposed() -> None:
                         {
                             "id": "abcDEF_123-",
                             "snippet": {
-                                "title": "Round Lab Review",
+                                "title": "Round Lab Dokdo Cleanser Review",
                                 "channelId": "UC-invalid/../../../attacker",
                                 "channelTitle": "Creator",
                             },
-                            "status": {"privacyStatus": "public", "embeddable": True},
+                            "status": {
+                                "privacyStatus": "public",
+                                "embeddable": True,
+                                "madeForKids": False,
+                            },
                         }
                     ]
                 },

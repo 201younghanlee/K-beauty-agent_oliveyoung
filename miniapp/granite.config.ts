@@ -23,6 +23,8 @@ const config: AppsInTossWebConfigResponse = defineConfig({
   outdir: 'dist',
   webViewProps: {
     type: 'partner',
+    allowsInlineMediaPlayback: true,
+    mediaPlaybackRequiresUserAction: true,
   },
 });
 
