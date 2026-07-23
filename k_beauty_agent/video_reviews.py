@@ -631,29 +631,30 @@ def _limited_payload(payload: dict[str, object], limit: int) -> dict[str, object
 
 
 def _review_query(product: Product) -> str:
-    names = [product.display_name_ko or "", product.name, product.brand]
-    unique: list[str] = []
+    # YouTube supports the `|` operator for OR queries. Treat the localized and
+    # English product names as alternatives instead of requiring one result to
+    # match both languages at once.
+    alternatives: list[str] = []
     seen: set[str] = set()
-    for raw in names:
+    for raw, review_term in (
+        (product.display_name_ko or "", "후기"),
+        (product.name, "review"),
+    ):
         value = " ".join(str(raw).split())
         key = value.casefold()
         if not value or key in seen:
             continue
-        # Product names in this catalog generally include the brand already.
-        # Avoid repeating a standalone brand, which can broaden the search
-        # toward unrelated products from the same company.
-        compact_value = _normalized_match_text(value)
-        if value == product.brand and any(
-            compact_value and compact_value in _normalized_match_text(existing)
-            for existing in unique
-        ):
-            continue
-        if value:
-            seen.add(key)
-            unique.append(value)
-    suffix = " 솔직 사용 후기 review"
-    names_text = " ".join(unique)
-    return f"{names_text[: 240 - len(suffix)].rstrip()}{suffix}"
+        candidate = f"{value} {review_term}"
+        separator_size = 1 if alternatives else 0
+        remaining = 240 - len("|".join(alternatives)) - separator_size
+        if remaining <= len(review_term) + 1:
+            break
+        alternatives.append(candidate[:remaining].rstrip())
+        seen.add(key)
+
+    if alternatives:
+        return "|".join(alternatives)
+    return f"{' '.join(product.brand.split())[:233]} review".strip()
 
 
 def _search_url(query: str) -> str:
