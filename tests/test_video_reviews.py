@@ -47,13 +47,14 @@ def test_without_api_key_returns_safe_product_specific_youtube_search() -> None:
     service.close()
 
 
-def test_review_query_keeps_bilingual_product_names_without_repeating_brand() -> None:
+def test_review_query_uses_bilingual_alternatives_without_repeating_brand() -> None:
     query = _review_query(_product())
 
-    assert "라운드랩 1025 독도 클렌저" in query
-    assert "Round Lab 1025 Dokdo Cleanser" in query
+    assert query == (
+        "라운드랩 1025 독도 클렌저 후기|"
+        "Round Lab 1025 Dokdo Cleanser review"
+    )
     assert query.count("Round Lab") == 1
-    assert query.endswith("솔직 사용 후기 review")
     assert len(query) <= 240
 
 
