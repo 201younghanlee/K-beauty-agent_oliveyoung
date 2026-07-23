@@ -1,5 +1,14 @@
 import { graniteEvent } from '@apps-in-toss/web-framework';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
+import { ArrowSquareOut, Eye, Play, ThumbsUp } from '@phosphor-icons/react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from 'react';
 import {
   deleteAnonymousSessionData,
   ingredientSelectionConflicts,
@@ -714,15 +723,23 @@ function videoPublishedLabel(value?: string): string {
   }
   return new Intl.DateTimeFormat('ko-KR', {
     year: 'numeric',
-    month: 'short',
+    month: 'numeric',
     day: 'numeric',
   }).format(published);
+}
+
+function videoCountLabel(value?: number): string {
+  if (value === undefined) {
+    return '';
+  }
+  return new Intl.NumberFormat('ko-KR').format(value);
 }
 
 interface VideoReviewSectionProps {
   product: Product;
   productName: string;
   policyAccepted: boolean;
+  priority?: boolean;
   onOpen: (url: string) => void;
 }
 
@@ -730,23 +747,34 @@ function VideoReviewSection({
   product,
   productName,
   policyAccepted,
+  priority = false,
   onOpen,
 }: VideoReviewSectionProps) {
   const [reviews, setReviews] = useState<ProductVideoReviews | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const policyAcceptedRef = useRef(policyAccepted);
+  const requestStartedRef = useRef(false);
+  const sectionRef = useRef<HTMLElement | null>(null);
   const sectionId = `video-reviews-${product.id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
 
   useEffect(() => {
     policyAcceptedRef.current = policyAccepted;
     if (!policyAccepted) {
+      requestStartedRef.current = false;
       setReviews(null);
       setError('');
     }
   }, [policyAccepted]);
 
-  async function loadReviews() {
+  const loadReviews = useCallback(async (force = false) => {
+    if (
+      !policyAcceptedRef.current
+      || (!force && requestStartedRef.current)
+    ) {
+      return;
+    }
+    requestStartedRef.current = true;
     setLoading(true);
     setError('');
     try {
@@ -761,53 +789,47 @@ function VideoReviewSection({
     } finally {
       setLoading(false);
     }
-  }
+  }, [policyAccepted, product.id]);
+
+  useEffect(() => {
+    if (!policyAccepted || reviews || error || requestStartedRef.current) {
+      return undefined;
+    }
+    if (priority || typeof IntersectionObserver === 'undefined') {
+      void loadReviews();
+      return undefined;
+    }
+
+    const section = sectionRef.current;
+    if (!section) {
+      return undefined;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer.disconnect();
+          void loadReviews();
+        }
+      },
+      { rootMargin: '240px 0px' },
+    );
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [error, loadReviews, policyAccepted, priority, reviews]);
 
   return (
-    <section className="video-review-section" aria-labelledby={`${sectionId}-title`}>
+    <section
+      ref={sectionRef}
+      className="video-review-section"
+      aria-labelledby={`${sectionId}-title`}
+    >
       <div className="video-review-heading">
         <YouTubeBrandLink onOpen={onOpen} />
         <div>
-          <strong id={`${sectionId}-title`}>제품 관련 YouTube 영상</strong>
-          <p>제품명으로 자동 검색한 공개 결과예요. 실제 사용·독립 후기 여부는 영상에서 확인해 주세요.</p>
+          <strong id={`${sectionId}-title`}>이 제품을 다룬 영상</strong>
+          <p>추천 제품과 관련된 공개 YouTube 영상을 바로 확인해 보세요.</p>
         </div>
       </div>
-
-      <div className="video-review-consent">
-        <p>
-          제품명으로 검색하며, YouTube 썸네일을 표시할 때 Google이 IP 주소 등 네트워크 정보를
-          처리할 수 있어요. 영상은 추천 순위·리뷰 평점·데이터 신뢰도에 반영하지 않아요.
-        </p>
-        <div className="video-review-policy-links" aria-label="YouTube 기능 정책 링크">
-          <button type="button" onClick={() => onOpen(termsOfUseUrl())}>서비스 이용조건</button>
-          <button type="button" onClick={() => onOpen(privacyPolicyUrl())}>개인정보 처리 안내</button>
-          <button type="button" onClick={() => onOpen(YOUTUBE_TERMS_URL)}>YouTube 이용약관</button>
-          <button type="button" onClick={() => onOpen(GOOGLE_PRIVACY_URL)}>Google 개인정보처리방침</button>
-        </div>
-      </div>
-
-      <button
-        type="button"
-        className="video-review-load"
-        aria-controls={`${sectionId}-results`}
-        aria-busy={loading}
-        aria-disabled={loading || !policyAccepted}
-        disabled={!policyAccepted}
-        onClick={() => {
-          if (!loading && policyAccepted) {
-            void loadReviews();
-          }
-        }}
-      >
-        {loading
-          ? '관련 영상을 찾고 있어요…'
-          : error
-            ? 'YouTube 관련 영상 다시 시도'
-            : reviews
-              ? 'YouTube 관련 영상 다시 확인'
-              : 'YouTube 관련 영상 찾아보기'}
-        <ArrowIcon />
-      </button>
 
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {loading
@@ -822,47 +844,128 @@ function VideoReviewSection({
       </p>
 
       <div id={`${sectionId}-results`} aria-busy={loading}>
+        {loading && (
+          <div className="video-review-skeleton" role="presentation" aria-hidden="true">
+            <div />
+            <span />
+            <div className="video-review-skeleton-channel">
+              <i />
+              <p><b /><small /></p>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="video-review-error" role="alert">
             <p>{error}</p>
+            <button
+              type="button"
+              onClick={() => {
+                if (!loading) {
+                  void loadReviews(true);
+                }
+              }}
+            >
+              다시 시도
+            </button>
           </div>
         )}
 
         {reviews && (
           <div className="video-review-results">
-            <p className="video-review-disclaimer">{reviews.disclaimerKo}</p>
             {reviews.videos.length > 0 ? (
               <div className="video-review-list">
                 {reviews.videos.map((video) => (
                   <article key={video.videoId} className="video-review-item">
-                    {video.thumbnailUrl && (
-                      <img
-                        className="video-review-thumbnail"
-                        src={video.thumbnailUrl}
-                        alt=""
-                        loading="lazy"
-                        decoding="async"
-                        referrerPolicy="no-referrer"
-                      />
-                    )}
-                    <div>
-                      <span className="video-review-channel">{video.channelTitle}</span>
-                      <h4>{video.title}</h4>
-                      <p>
-                        {videoPublishedLabel(video.publishedAt)}
-                        {video.hasPaidProductPlacement && (
-                          <span className="paid-promotion-badge">유료 프로모션 표시 있음</span>
-                        )}
-                      </p>
-                    </div>
                     <button
                       type="button"
+                      className="video-review-preview"
                       onClick={() => onOpen(video.url)}
                       aria-label={`${productName}, ${video.channelTitle} 영상을 YouTube에서 보기`}
                     >
-                      YouTube에서 영상 보기
-                      <ArrowIcon />
+                      {video.thumbnailUrl ? (
+                        <img
+                          className="video-review-thumbnail"
+                          src={video.thumbnailUrl}
+                          alt=""
+                          loading={priority ? 'eager' : 'lazy'}
+                          decoding="async"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span className="video-review-thumbnail-fallback" aria-hidden="true">
+                          YouTube
+                        </span>
+                      )}
+                      <span className="video-review-preview-shade" aria-hidden="true" />
+                      <span className="video-review-preview-title">
+                        <b>{video.title}</b>
+                        <small>{video.channelTitle}</small>
+                      </span>
+                      {video.hasPaidProductPlacement && (
+                        <span className="paid-promotion-badge">유료 프로모션 포함</span>
+                      )}
+                      <span className="video-review-play" aria-hidden="true">
+                        <Play weight="fill" />
+                      </span>
                     </button>
+
+                    <div className="video-review-stats" aria-label="영상 공개 정보">
+                      {video.viewCount !== undefined && (
+                        <span>
+                          <Eye weight="regular" aria-hidden="true" />
+                          {videoCountLabel(video.viewCount)}회
+                        </span>
+                      )}
+                      {video.likeCount !== undefined && (
+                        <span>
+                          <ThumbsUp weight="regular" aria-hidden="true" />
+                          {videoCountLabel(video.likeCount)}개
+                        </span>
+                      )}
+                      {videoPublishedLabel(video.publishedAt) && (
+                        <time dateTime={video.publishedAt}>
+                          {videoPublishedLabel(video.publishedAt)}
+                        </time>
+                      )}
+                    </div>
+
+                    <div className="video-review-channel-card">
+                      <div className="video-review-channel-profile">
+                        {video.channelThumbnailUrl ? (
+                          <img
+                            src={video.channelThumbnailUrl}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <span aria-hidden="true">
+                            {video.channelTitle.trim().charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                        <div>
+                          <strong>{video.channelTitle}</strong>
+                          <small>
+                            {video.subscriberCountHidden
+                              ? '구독자 수 비공개'
+                              : video.subscriberCount !== undefined
+                                ? `구독자 ${videoCountLabel(video.subscriberCount)}명`
+                                : 'YouTube 채널'}
+                          </small>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="video-review-watch"
+                        onClick={() => onOpen(video.url)}
+                        aria-label={`${productName}, ${video.channelTitle} 영상을 YouTube에서 보기`}
+                      >
+                        <ArrowSquareOut weight="bold" aria-hidden="true" />
+                        영상 보러가기
+                      </button>
+                    </div>
                   </article>
                 ))}
               </div>
@@ -879,6 +982,21 @@ function VideoReviewSection({
               {reviews.videos.length > 0 ? '다른 관련 영상 더 찾아보기' : '제품명으로 YouTube 검색'}
               <ArrowIcon />
             </button>
+
+            <details className="video-review-consent">
+              <summary>YouTube 기능 안내</summary>
+              <p>
+                {reviews.disclaimerKo || '제품명으로 자동 검색한 공개 결과이며, 실제 사용·독립 후기 여부는 영상에서 확인해 주세요.'}
+                {' '}영상 및 채널 이미지를 표시할 때 Google이 IP 주소 등 네트워크 정보를 처리할 수 있어요.
+                영상은 추천 순위·리뷰 평점·데이터 신뢰도에 반영하지 않아요.
+              </p>
+              <div className="video-review-policy-links" aria-label="YouTube 기능 정책 링크">
+                <button type="button" onClick={() => onOpen(termsOfUseUrl())}>서비스 이용조건</button>
+                <button type="button" onClick={() => onOpen(privacyPolicyUrl())}>개인정보 처리 안내</button>
+                <button type="button" onClick={() => onOpen(YOUTUBE_TERMS_URL)}>YouTube 이용약관</button>
+                <button type="button" onClick={() => onOpen(GOOGLE_PRIVACY_URL)}>Google 개인정보처리방침</button>
+              </div>
+            </details>
           </div>
         )}
       </div>
@@ -1145,6 +1263,7 @@ function ProductCard({
               product={product}
               productName={productDisplayName(item)}
               policyAccepted={serviceTermsAccepted}
+              priority={priority}
               onOpen={onOpenInformation}
             />
           </>

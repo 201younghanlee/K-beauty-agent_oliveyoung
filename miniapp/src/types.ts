@@ -64,6 +64,13 @@ export interface ProductVideoReview {
   publishedAt?: string;
   duration?: string;
   thumbnailUrl?: string;
+  viewCount?: number;
+  likeCount?: number;
+  channelId?: string;
+  channelThumbnailUrl?: string;
+  subscriberCount?: number;
+  subscriberCountHidden: boolean;
+  channelUrl?: string;
   url: string;
   hasPaidProductPlacement: boolean;
 }

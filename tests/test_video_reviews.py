@@ -11,6 +11,9 @@ from k_beauty_agent.storage import SQLiteStore
 from k_beauty_agent.video_reviews import YouTubeReviewService
 
 
+CHANNEL_ID = "UCabcdefghijklmnopqrstuv"
+
+
 def _product() -> Product:
     return Product(
         id="round-lab-1025-dokdo-cleanser",
@@ -48,41 +51,85 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
         assert "server-secret-key" not in str(request.url)
         if request.url.path.endswith("/search"):
             assert request.url.params["type"] == "video"
+            assert request.url.params["videoEmbeddable"] == "true"
+            assert request.url.params["videoSyndicated"] == "true"
             assert request.url.params["safeSearch"] == "strict"
             assert "Round Lab" in request.url.params["q"]
+            assert "channelId" in request.url.params["fields"]
             return httpx.Response(
                 200,
                 json={
                     "items": [
                         {"id": {"videoId": "abcDEF_123-"}, "snippet": {}},
+                        {"id": {"videoId": "noembed_123"}, "snippet": {}},
                         {"id": {"videoId": "private1234"}, "snippet": {}},
                     ]
                 },
             )
-        assert request.url.path.endswith("/videos")
+        if request.url.path.endswith("/videos"):
+            assert "statistics" in request.url.params["part"]
+            assert "channelId" in request.url.params["fields"]
+            assert "viewCount" in request.url.params["fields"]
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "abcDEF_123-",
+                            "snippet": {
+                                "title": "I used Round Lab &amp; here is my review",
+                                "channelId": CHANNEL_ID,
+                                "channelTitle": "Skin Creator",
+                                "publishedAt": "2026-07-01T01:02:03Z",
+                                "thumbnails": {
+                                    "medium": {
+                                        "url": "https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg"
+                                    }
+                                },
+                            },
+                            "status": {"privacyStatus": "public", "embeddable": True},
+                            "contentDetails": {"duration": "PT8M12S"},
+                            "paidProductPlacementDetails": {"hasPaidProductPlacement": True},
+                            "statistics": {"viewCount": "50752", "likeCount": "1882"},
+                        },
+                        {
+                            "id": "noembed_123",
+                            "snippet": {
+                                "title": "Round Lab review that cannot be embedded",
+                                "channelId": CHANNEL_ID,
+                                "channelTitle": "Skin Creator",
+                            },
+                            "status": {"privacyStatus": "public", "embeddable": False},
+                        },
+                        {
+                            "id": "private1234",
+                            "snippet": {"title": "Private", "channelTitle": "Hidden"},
+                            "status": {"privacyStatus": "private", "embeddable": True},
+                        },
+                    ]
+                },
+            )
+        assert request.url.path.endswith("/channels")
+        assert request.url.params["part"] == "snippet,statistics"
+        assert request.url.params["id"] == CHANNEL_ID
         return httpx.Response(
             200,
             json={
                 "items": [
                     {
-                        "id": "abcDEF_123-",
+                        "id": CHANNEL_ID,
                         "snippet": {
-                            "title": "I used Round Lab &amp; here is my review",
-                            "channelTitle": "Skin Creator",
-                            "publishedAt": "2026-07-01T01:02:03Z",
                             "thumbnails": {
-                                "medium": {"url": "https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg"}
-                            },
+                                "default": {
+                                    "url": "https://yt3.googleusercontent.com/channel-avatar"
+                                }
+                            }
                         },
-                        "status": {"privacyStatus": "public", "embeddable": True},
-                        "contentDetails": {"duration": "PT8M12S"},
-                        "paidProductPlacementDetails": {"hasPaidProductPlacement": True},
-                    },
-                    {
-                        "id": "private1234",
-                        "snippet": {"title": "Private", "channelTitle": "Hidden"},
-                        "status": {"privacyStatus": "private"},
-                    },
+                        "statistics": {
+                            "subscriberCount": "41900",
+                            "hiddenSubscriberCount": False,
+                        },
+                    }
                 ]
             },
         )
@@ -95,7 +142,7 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
 
     assert first == second
     assert "server-secret-key" not in str(first)
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert first["status"] == "ready"
     assert first["videos"] == [
         {
@@ -107,6 +154,13 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
             "thumbnail_url": "https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg",
             "url": "https://www.youtube.com/watch?v=abcDEF_123-",
             "has_paid_product_placement": True,
+            "channel_id": CHANNEL_ID,
+            "channel_url": f"https://www.youtube.com/channel/{CHANNEL_ID}",
+            "view_count": 50752,
+            "like_count": 1882,
+            "channel_thumbnail_url": "https://yt3.googleusercontent.com/channel-avatar",
+            "subscriber_count_hidden": False,
+            "subscriber_count": 41900,
         }
     ]
     client.close()
@@ -116,18 +170,49 @@ def test_malformed_thumbnail_and_upstream_failure_fail_closed() -> None:
     def malformed_handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/search"):
             return httpx.Response(200, json={"items": [{"id": {"videoId": "abcDEF_123-"}}]})
+        if request.url.path.endswith("/videos"):
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "abcDEF_123-",
+                            "snippet": {
+                                "title": "Round Lab Review",
+                                "channelId": CHANNEL_ID,
+                                "channelTitle": "Creator",
+                                "thumbnails": {
+                                    "medium": {
+                                        "url": "https://i.ytimg.com.attacker.example/x.jpg"
+                                    }
+                                },
+                            },
+                            "statistics": {
+                                "viewCount": "-1",
+                                "likeCount": "9" * 5_000,
+                            },
+                            "status": {"privacyStatus": "public", "embeddable": True},
+                        }
+                    ]
+                },
+            )
         return httpx.Response(
             200,
             json={
                 "items": [
                     {
-                        "id": "abcDEF_123-",
+                        "id": CHANNEL_ID,
                         "snippet": {
-                            "title": "Round Lab Review",
-                            "channelTitle": "Creator",
-                            "thumbnails": {"medium": {"url": "https://i.ytimg.com.attacker.example/x.jpg"}},
+                            "thumbnails": {
+                                "default": {
+                                    "url": "https://yt3.googleusercontent.com.attacker.example/avatar"
+                                }
+                            }
                         },
-                        "status": {"privacyStatus": "public"},
+                        "statistics": {
+                            "subscriberCount": "99999",
+                            "hiddenSubscriberCount": True,
+                        },
                     }
                 ]
             },
@@ -135,7 +220,13 @@ def test_malformed_thumbnail_and_upstream_failure_fail_closed() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(malformed_handler))
     result = YouTubeReviewService("key", client=client).reviews_for_product(_product())
-    assert result["videos"][0]["thumbnail_url"] is None
+    video = result["videos"][0]
+    assert video["thumbnail_url"] is None
+    assert "view_count" not in video
+    assert "like_count" not in video
+    assert "channel_thumbnail_url" not in video
+    assert video["subscriber_count_hidden"] is True
+    assert "subscriber_count" not in video
     client.close()
 
     failing_client = httpx.Client(
@@ -146,6 +237,93 @@ def test_malformed_thumbnail_and_upstream_failure_fail_closed() -> None:
     assert fallback["videos"] == []
     assert fallback["search_url"].startswith("https://www.youtube.com/results?")
     failing_client.close()
+
+
+def test_channel_lookup_failure_preserves_verified_video_and_statistics() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("/search"):
+            return httpx.Response(200, json={"items": [{"id": {"videoId": "abcDEF_123-"}}]})
+        if request.url.path.endswith("/videos"):
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "abcDEF_123-",
+                            "snippet": {
+                                "title": "Round Lab Review",
+                                "channelId": CHANNEL_ID,
+                                "channelTitle": "Creator",
+                            },
+                            "statistics": {"viewCount": "12", "likeCount": "3"},
+                            "status": {"privacyStatus": "public", "embeddable": True},
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(503, json={"error": "channel service unavailable"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = YouTubeReviewService("key", client=client).reviews_for_product(_product())
+
+    assert calls == ["/youtube/v3/search", "/youtube/v3/videos", "/youtube/v3/channels"]
+    assert result["status"] == "ready"
+    assert result["videos"] == [
+        {
+            "video_id": "abcDEF_123-",
+            "title": "Round Lab Review",
+            "channel_title": "Creator",
+            "published_at": None,
+            "duration": None,
+            "thumbnail_url": None,
+            "url": "https://www.youtube.com/watch?v=abcDEF_123-",
+            "has_paid_product_placement": False,
+            "channel_id": CHANNEL_ID,
+            "channel_url": f"https://www.youtube.com/channel/{CHANNEL_ID}",
+            "view_count": 12,
+            "like_count": 3,
+        }
+    ]
+    client.close()
+
+
+def test_invalid_channel_id_is_not_requested_or_exposed() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("/search"):
+            return httpx.Response(200, json={"items": [{"id": {"videoId": "abcDEF_123-"}}]})
+        if request.url.path.endswith("/videos"):
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "abcDEF_123-",
+                            "snippet": {
+                                "title": "Round Lab Review",
+                                "channelId": "UC-invalid/../../../attacker",
+                                "channelTitle": "Creator",
+                            },
+                            "status": {"privacyStatus": "public", "embeddable": True},
+                        }
+                    ]
+                },
+            )
+        raise AssertionError("invalid channel ID must not trigger channels.list")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = YouTubeReviewService("key", client=client).reviews_for_product(_product())
+
+    assert calls == ["/youtube/v3/search", "/youtube/v3/videos"]
+    assert result["status"] == "ready"
+    assert "channel_id" not in result["videos"][0]
+    assert "channel_url" not in result["videos"][0]
+    client.close()
 
 
 def test_video_review_endpoint_validates_product_and_never_changes_recommendation_data(monkeypatch) -> None:

@@ -18,11 +18,15 @@ from .models import Product
 
 YOUTUBE_SEARCH_API_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_VIDEOS_API_URL = "https://www.googleapis.com/youtube/v3/videos"
+YOUTUBE_CHANNELS_API_URL = "https://www.googleapis.com/youtube/v3/channels"
 YOUTUBE_RESULTS_URL = "https://www.youtube.com/results"
 YOUTUBE_WATCH_URL = "https://www.youtube.com/watch"
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/channel"
 YOUTUBE_TERMS_URL = "https://www.youtube.com/t/terms"
 GOOGLE_PRIVACY_URL = "https://policies.google.com/privacy"
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+CHANNEL_ID_PATTERN = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
 MAX_YOUTUBE_RESPONSE_BYTES = 1_500_000
 MAX_CACHE_ENTRIES = 512
 YOUTUBE_QUOTA_TIMEZONE = ZoneInfo("America/Los_Angeles")
@@ -211,12 +215,17 @@ class YouTubeReviewService:
                 "part": "snippet",
                 "q": query,
                 "type": "video",
+                "videoEmbeddable": "true",
+                "videoSyndicated": "true",
                 "maxResults": max(1, min(limit, 10)),
                 "order": "relevance",
                 "regionCode": "KR",
                 "relevanceLanguage": "ko",
                 "safeSearch": "strict",
-                "fields": "items(id/videoId,snippet(title,description,channelTitle,publishedAt,thumbnails))",
+                "fields": (
+                    "items(id/videoId,"
+                    "snippet(title,description,channelId,channelTitle,publishedAt,thumbnails))"
+                ),
             },
             timeout=httpx.Timeout(5.0, connect=2.5, pool=1.0),
         )
@@ -244,12 +253,13 @@ class YouTubeReviewService:
             YOUTUBE_VIDEOS_API_URL,
             headers={"x-goog-api-key": self._api_key},
             params={
-                "part": "snippet,status,contentDetails,paidProductPlacementDetails",
+                "part": "snippet,status,contentDetails,paidProductPlacementDetails,statistics",
                 "id": ",".join(search_by_id),
                 "fields": (
-                    "items(id,snippet(title,channelTitle,publishedAt,thumbnails),"
+                    "items(id,snippet(title,channelId,channelTitle,publishedAt,thumbnails),"
                     "status(privacyStatus,embeddable),contentDetails/duration,"
-                    "paidProductPlacementDetails/hasPaidProductPlacement)"
+                    "paidProductPlacementDetails/hasPaidProductPlacement,"
+                    "statistics(viewCount,likeCount))"
                 ),
             },
             timeout=httpx.Timeout(5.0, connect=2.5, pool=1.0),
@@ -269,6 +279,7 @@ class YouTubeReviewService:
                 isinstance(video_id, str)
                 and VIDEO_ID_PATTERN.fullmatch(video_id)
                 and status.get("privacyStatus") == "public"
+                and status.get("embeddable") is True
             ):
                 details_by_id[video_id] = item
 
@@ -291,23 +302,99 @@ class YouTubeReviewService:
                 else {}
             )
             content = item.get("contentDetails") if isinstance(item.get("contentDetails"), dict) else {}
+            statistics = item.get("statistics") if isinstance(item.get("statistics"), dict) else {}
             title = _clean_text(snippet.get("title"), 240)
             channel_title = _clean_text(snippet.get("channelTitle"), 160)
             if not title or not channel_title:
                 continue
-            videos.append(
-                {
-                    "video_id": video_id,
-                    "title": title,
-                    "channel_title": channel_title,
-                    "published_at": _clean_text(snippet.get("publishedAt"), 40) or None,
-                    "duration": _clean_text(content.get("duration"), 32) or None,
-                    "thumbnail_url": _thumbnail_url(snippet.get("thumbnails")),
-                    "url": f"{YOUTUBE_WATCH_URL}?v={video_id}",
-                    "has_paid_product_placement": paid.get("hasPaidProductPlacement") is True,
-                }
+            video: dict[str, object] = {
+                "video_id": video_id,
+                "title": title,
+                "channel_title": channel_title,
+                "published_at": _clean_text(snippet.get("publishedAt"), 40) or None,
+                "duration": _clean_text(content.get("duration"), 32) or None,
+                "thumbnail_url": _thumbnail_url(snippet.get("thumbnails")),
+                "url": f"{YOUTUBE_WATCH_URL}?v={video_id}",
+                "has_paid_product_placement": paid.get("hasPaidProductPlacement") is True,
+            }
+            channel_id = _channel_id(snippet.get("channelId"))
+            if channel_id is not None:
+                video["channel_id"] = channel_id
+                video["channel_url"] = f"{YOUTUBE_CHANNEL_URL}/{channel_id}"
+            view_count = _non_negative_int(statistics.get("viewCount"))
+            if view_count is not None:
+                video["view_count"] = view_count
+            like_count = _non_negative_int(statistics.get("likeCount"))
+            if like_count is not None:
+                video["like_count"] = like_count
+            videos.append(video)
+
+        channel_ids = [
+            channel_id
+            for channel_id in (
+                video.get("channel_id")
+                for video in videos
             )
+            if isinstance(channel_id, str)
+        ]
+        try:
+            channel_details = self._channel_details(channel_ids)
+        except (YouTubeQuotaExceededError, httpx.HTTPError, TypeError, ValueError):
+            # Channel metadata is optional. A valid public video remains useful
+            # even when the separate profile lookup is unavailable.
+            channel_details = {}
+        for video in videos:
+            channel_id = video.get("channel_id")
+            if isinstance(channel_id, str):
+                video.update(channel_details.get(channel_id, {}))
         return videos
+
+    def _channel_details(self, channel_ids: list[str]) -> dict[str, dict[str, object]]:
+        unique_ids = list(dict.fromkeys(channel_ids))
+        if not unique_ids:
+            return {}
+
+        response = self._client.get(
+            YOUTUBE_CHANNELS_API_URL,
+            headers={"x-goog-api-key": self._api_key},
+            params={
+                "part": "snippet,statistics",
+                "id": ",".join(unique_ids),
+                "fields": (
+                    "items(id,snippet(thumbnails),"
+                    "statistics(subscriberCount,hiddenSubscriberCount))"
+                ),
+            },
+            timeout=httpx.Timeout(5.0, connect=2.5, pool=1.0),
+        )
+        _raise_for_safe_json_response(response)
+        data = response.json()
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+            raise ValueError("YouTube channel response is malformed")
+
+        requested_ids = set(unique_ids)
+        details: dict[str, dict[str, object]] = {}
+        for item in data["items"]:
+            if not isinstance(item, dict):
+                continue
+            channel_id = _channel_id(item.get("id"))
+            if channel_id is None or channel_id not in requested_ids:
+                continue
+            snippet = item.get("snippet") if isinstance(item.get("snippet"), dict) else {}
+            statistics = item.get("statistics") if isinstance(item.get("statistics"), dict) else {}
+            channel: dict[str, object] = {}
+            thumbnail_url = _channel_thumbnail_url(snippet.get("thumbnails"))
+            if thumbnail_url is not None:
+                channel["channel_thumbnail_url"] = thumbnail_url
+            hidden = statistics.get("hiddenSubscriberCount")
+            if isinstance(hidden, bool):
+                channel["subscriber_count_hidden"] = hidden
+                if not hidden:
+                    subscriber_count = _non_negative_int(statistics.get("subscriberCount"))
+                    if subscriber_count is not None:
+                        channel["subscriber_count"] = subscriber_count
+            details[channel_id] = channel
+        return details
 
     def _cached(self, key: str) -> dict[str, object] | None:
         now = time.monotonic()
@@ -455,7 +542,37 @@ def _clean_text(value: object, max_length: int) -> str:
     return " ".join(html.unescape(value).split())[:max_length]
 
 
+def _channel_id(value: object) -> str | None:
+    if isinstance(value, str) and CHANNEL_ID_PATTERN.fullmatch(value):
+        return value
+    return None
+
+
+def _non_negative_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        candidate = value
+    elif isinstance(value, str) and value.isascii() and value.isdigit():
+        if len(value) > len(str(MAX_SAFE_INTEGER)):
+            return None
+        candidate = int(value)
+    else:
+        return None
+    if 0 <= candidate <= MAX_SAFE_INTEGER:
+        return candidate
+    return None
+
+
 def _thumbnail_url(value: object) -> str | None:
+    return _thumbnail_url_for_hosts(value, {"i.ytimg.com", "img.youtube.com"})
+
+
+def _channel_thumbnail_url(value: object) -> str | None:
+    return _thumbnail_url_for_hosts(value, {"yt3.ggpht.com", "yt3.googleusercontent.com"})
+
+
+def _thumbnail_url_for_hosts(value: object, allowed_hosts: set[str]) -> str | None:
     if not isinstance(value, dict):
         return None
     for key in ("medium", "high", "default"):
@@ -470,10 +587,11 @@ def _thumbnail_url(value: object) -> str | None:
             continue
         if (
             parsed.scheme == "https"
-            and parsed.hostname in {"i.ytimg.com", "img.youtube.com"}
+            and parsed.hostname in allowed_hosts
             and not parsed.username
             and not parsed.password
             and parsed_port in {None, 443}
+            and parsed.path.startswith("/")
         ):
             return raw_url
     return None

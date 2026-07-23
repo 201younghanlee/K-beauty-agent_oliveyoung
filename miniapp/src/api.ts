@@ -985,8 +985,10 @@ export function normalizeOffersResponse(payload: unknown): RetailOffer[] {
 }
 
 const YOUTUBE_VIDEO_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_CHANNEL_ID_PATTERN = /^UC[A-Za-z0-9_-]{22}$/;
 const YOUTUBE_HOSTS = new Set(['www.youtube.com']);
 const YOUTUBE_THUMBNAIL_HOSTS = new Set(['i.ytimg.com', 'img.youtube.com']);
+const YOUTUBE_CHANNEL_THUMBNAIL_HOSTS = new Set(['yt3.ggpht.com', 'yt3.googleusercontent.com']);
 
 function asExactHttpsUrl(
   value: unknown,
@@ -1015,6 +1017,41 @@ function asExactHttpsUrl(
   }
 }
 
+function asNonNegativeInteger(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (
+      typeof value === 'number'
+      && Number.isSafeInteger(value)
+      && value >= 0
+    ) {
+      return value;
+    }
+    if (typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value.trim())) {
+      const parsed = Number(value);
+      if (Number.isSafeInteger(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+}
+
+function asYouTubeChannelUrl(value: unknown, channelId: string): string | undefined {
+  const url = asExactHttpsUrl(value, YOUTUBE_HOSTS);
+  if (!url || !YOUTUBE_CHANNEL_ID_PATTERN.test(channelId)) {
+    return undefined;
+  }
+  const parsed = new URL(url);
+  if (
+    parsed.pathname !== `/channel/${channelId}`
+    || parsed.search
+    || parsed.hash
+  ) {
+    return undefined;
+  }
+  return parsed.toString();
+}
+
 function normalizeYouTubeVideo(value: unknown): ProductVideoReview | null {
   if (!isRecord(value)) {
     return null;
@@ -1029,6 +1066,8 @@ function normalizeYouTubeVideo(value: unknown): ProductVideoReview | null {
   if (new URL(url).searchParams.get('v') !== videoId) {
     return null;
   }
+  const channelId = firstText(value.channel_id, value.channelId);
+  const safeChannelId = YOUTUBE_CHANNEL_ID_PATTERN.test(channelId) ? channelId : undefined;
   return {
     videoId,
     title: title.slice(0, 240),
@@ -1039,6 +1078,20 @@ function normalizeYouTubeVideo(value: unknown): ProductVideoReview | null {
       value.thumbnail_url ?? value.thumbnailUrl,
       YOUTUBE_THUMBNAIL_HOSTS,
     ),
+    viewCount: asNonNegativeInteger(value.view_count, value.viewCount),
+    likeCount: asNonNegativeInteger(value.like_count, value.likeCount),
+    channelId: safeChannelId,
+    channelThumbnailUrl: asExactHttpsUrl(
+      value.channel_thumbnail_url ?? value.channelThumbnailUrl,
+      YOUTUBE_CHANNEL_THUMBNAIL_HOSTS,
+    ),
+    subscriberCount: asNonNegativeInteger(value.subscriber_count, value.subscriberCount),
+    subscriberCountHidden: asBoolean(
+      value.subscriber_count_hidden ?? value.subscriberCountHidden,
+    ) ?? false,
+    channelUrl: safeChannelId
+      ? asYouTubeChannelUrl(value.channel_url ?? value.channelUrl, safeChannelId)
+      : undefined,
     url,
     hasPaidProductPlacement: asBoolean(
       value.has_paid_product_placement ?? value.hasPaidProductPlacement,
