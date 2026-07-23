@@ -594,6 +594,13 @@ describe('normalizeProductVideoReviews', () => {
           published_at: '2026-07-01T00:00:00Z',
           url: 'https://www.youtube.com/watch?v=abcDEF_123-',
           thumbnail_url: 'https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg',
+          view_count: '50752',
+          like_count: 1882,
+          channel_id: 'UCabcdefghijklmnopqrstuv',
+          channel_thumbnail_url: 'https://yt3.ggpht.com/channel-avatar=s88-c-k-c0x00ffffff-no-rj',
+          subscriber_count: '41900',
+          subscriber_count_hidden: false,
+          channel_url: 'https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv',
           has_paid_product_placement: true,
         },
         {
@@ -618,9 +625,48 @@ describe('normalizeProductVideoReviews', () => {
       publishedAt: '2026-07-01T00:00:00Z',
       duration: undefined,
       thumbnailUrl: 'https://i.ytimg.com/vi/abcDEF_123-/mqdefault.jpg',
+      viewCount: 50752,
+      likeCount: 1882,
+      channelId: 'UCabcdefghijklmnopqrstuv',
+      channelThumbnailUrl: 'https://yt3.ggpht.com/channel-avatar=s88-c-k-c0x00ffffff-no-rj',
+      subscriberCount: 41900,
+      subscriberCountHidden: false,
+      channelUrl: 'https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv',
       url: 'https://www.youtube.com/watch?v=abcDEF_123-',
       hasPaidProductPlacement: true,
     }]);
+  });
+
+  it('drops malformed counts and lookalike YouTube channel assets', () => {
+    const result = normalizeProductVideoReviews({
+      provider: 'YouTube',
+      status: 'ready',
+      search_url: 'https://www.youtube.com/results?search_query=test',
+      terms_url: 'https://www.youtube.com/t/terms',
+      privacy_url: 'https://policies.google.com/privacy',
+      videos: [{
+        video_id: 'xyzXYZ_987-',
+        title: '제품 영상',
+        channel_title: '검증 채널',
+        url: 'https://www.youtube.com/watch?v=xyzXYZ_987-',
+        view_count: '-1',
+        like_count: '1.5',
+        subscriber_count: '9007199254740992',
+        channel_id: 'UCabcdefghijklmnopqrstuv',
+        channel_thumbnail_url: 'https://yt3.ggpht.com.attacker.example/avatar',
+        channel_url: 'https://www.youtube.com.attacker.example/channel/UCabcdefghijklmnopqrstuv',
+      }],
+    });
+
+    expect(result.videos[0]).toMatchObject({
+      viewCount: undefined,
+      likeCount: undefined,
+      subscriberCount: undefined,
+      subscriberCountHidden: false,
+      channelId: 'UCabcdefghijklmnopqrstuv',
+      channelThumbnailUrl: undefined,
+      channelUrl: undefined,
+    });
   });
 
   it('rejects lookalike search and policy origins', () => {
