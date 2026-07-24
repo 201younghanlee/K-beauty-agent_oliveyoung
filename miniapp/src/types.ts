@@ -55,6 +55,7 @@ export interface RetailOffer {
   checkedAt?: string;
   clickUrl?: string;
   isLinkOnly: boolean;
+  linkType: 'product_page' | 'retailer_search';
   isAffiliate: boolean;
   affiliateLabel?: string;
   affiliateDisclosure?: string;

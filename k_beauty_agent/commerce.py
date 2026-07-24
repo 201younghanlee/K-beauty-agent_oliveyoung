@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable
 from urllib.parse import quote, urlparse
 
-from .catalog_links import CatalogLink, retailer_links
+from .catalog_links import CatalogLink, retailer_links, retailer_search_links
 from .identity_resolution import normalize_gtin
 from .models import Product
 from .source_adapters.security import require_https_url
@@ -76,11 +76,18 @@ class CommerceService:
     service only enriches an already-ranked product with retailer offers.
     """
 
-    def __init__(self, store: SQLiteStore, signing_secret: str):
+    def __init__(
+        self,
+        store: SQLiteStore,
+        signing_secret: str,
+        *,
+        include_retailer_searches: bool = False,
+    ):
         if not signing_secret:
             raise ValueError("A redirect signing secret is required")
         self.store = store
         self._signing_secret = signing_secret.encode("utf-8")
+        self._include_retailer_searches = include_retailer_searches
 
     def sync_legacy_catalog(self, products: Iterable[Product]) -> dict[str, int]:
         """Idempotently backfill the current in-memory catalog and its legacy offer.
@@ -106,7 +113,16 @@ class CommerceService:
                 for product in product_list:
                     products_seen += 1
                     self._upsert_product(connection, product, started_at)
-                    for link in retailer_links(product):
+                    direct_links = retailer_links(product)
+                    links = list(direct_links)
+                    if self._include_retailer_searches:
+                        links.extend(
+                            retailer_search_links(
+                                product,
+                                exclude_providers={link.provider for link in direct_links},
+                            )
+                        )
+                    for link in links:
                         destination_url = link.url
                         try:
                             domain = _validated_domain(destination_url)
@@ -162,6 +178,7 @@ class CommerceService:
                                     {
                                         "backfilled_from": "Product",
                                         "catalog_link_source": link.source_field,
+                                        "link_type": link.link_type,
                                     },
                                     ensure_ascii=False,
                                 ),
@@ -740,7 +757,8 @@ class CommerceService:
         current_time = _now() if now is None else now
         with self.store.connect() as connection:
             rows = connection.execute(_OFFERS_FOR_PRODUCT_SQL, (product_id,)).fetchall()
-        offers = [self._public_offer(dict(row), current_time) for row in rows]
+        preferred_rows = _prefer_specific_retailer_offers(rows)
+        offers = [self._public_offer(dict(row), current_time) for row in preferred_rows]
         offers.sort(key=_public_offer_sort_key)
         return {
             "product_id": product_id,
@@ -769,7 +787,7 @@ class CommerceService:
                             p.id AS product_id, o.price_amount, o.currency, o.checked_at,
                             o.stale_after, o.stock_status, r.id AS retailer_id,
                             r.display_name AS retailer_name, o.affiliate_url,
-                            ap.status AS affiliate_status
+                            o.metadata_json, ap.status AS affiliate_status
                         FROM products p
                         JOIN product_variants v ON v.product_id = p.id
                         JOIN offers o ON o.variant_id = v.id AND o.active = 1
@@ -784,7 +802,11 @@ class CommerceService:
         for row in rows:
             grouped[row["product_id"]].append(row)
         return {
-            product_id: _summary_from_rows(product_id, product_rows, current_time)
+            product_id: _summary_from_rows(
+                product_id,
+                _prefer_specific_retailer_offers(product_rows),
+                current_time,
+            )
             for product_id, product_rows in grouped.items()
         }
 
@@ -803,6 +825,7 @@ class CommerceService:
         # They may remain navigable after their observation timestamp ages out;
         # live feed offers keep the stricter stale-link block.
         link_only = _is_link_only_offer(row)
+        link_type = "retailer_search" if _is_retailer_search_offer(row) else "product_page"
         token = (
             self.create_redirect_token(row["id"], now=now)
             if affiliate_link_allowed and (freshness != "stale" or _allows_stale_redirect(row))
@@ -835,6 +858,7 @@ class CommerceService:
             },
             "redirect_url": f"/r/{token}" if token else None,
             "link_only": link_only,
+            "link_type": link_type,
             "affiliate": {
                 "active": affiliate_active,
                 "enabled": affiliate_active,
@@ -1256,7 +1280,10 @@ def _legacy_price_evidence(product: Product, link: CatalogLink) -> tuple[int | N
     that retailer. Those additional destinations therefore stay link-only.
     """
 
-    if link.source_field not in {"purchase_url", "oliveyoung_url"}:
+    if (
+        link.link_type != "product_page"
+        or link.source_field not in {"purchase_url", "oliveyoung_url"}
+    ):
         return None, None
     price_amount = product.price_krw
     if price_amount is None:
@@ -1352,7 +1379,8 @@ def _summary_from_rows(product_id: str, rows: list[sqlite3.Row], now: int) -> di
     }
 
 
-def _public_offer_sort_key(offer: dict[str, Any]) -> tuple[int, int, int, str]:
+def _public_offer_sort_key(offer: dict[str, Any]) -> tuple[int, int, int, int, str]:
+    link_type_rank = 1 if offer.get("link_type") == "retailer_search" else 0
     freshness_rank = {"fresh": 0, "unknown": 1, "stale": 2}.get(offer["freshness"]["status"], 3)
     stock_rank = {"in_stock": 0, "preorder": 1, "unknown": 2, "out_of_stock": 3}.get(
         offer["stock_status"], 2
@@ -1362,7 +1390,7 @@ def _public_offer_sort_key(offer: dict[str, Any]) -> tuple[int, int, int, str]:
         if offer["price"]["amount"] is not None and offer["price"]["currency"] == "KRW"
         else 2**63 - 1
     )
-    return freshness_rank, stock_rank, price, offer["retailer"]["name"].casefold()
+    return link_type_rank, freshness_rank, stock_rank, price, offer["retailer"]["name"].casefold()
 
 
 def _freshness(checked_at: int | None, stale_after: int | None, now: int) -> str:
@@ -1377,6 +1405,25 @@ def _is_link_only_offer(row: Any) -> bool:
     if row["source_kind"] != MANUAL_COUPANG_LINK_SOURCE_KIND:
         return False
     return _json_object(row["metadata_json"]).get("link_only") is True
+
+
+def _is_retailer_search_offer(row: Any) -> bool:
+    return _json_object(row["metadata_json"]).get("link_type") == "retailer_search"
+
+
+def _prefer_specific_retailer_offers(rows: Iterable[Any]) -> list[Any]:
+    row_list = list(rows)
+    retailers_with_specific_links = {
+        row["retailer_id"]
+        for row in row_list
+        if not _is_retailer_search_offer(row)
+    }
+    return [
+        row
+        for row in row_list
+        if not _is_retailer_search_offer(row)
+        or row["retailer_id"] not in retailers_with_specific_links
+    ]
 
 
 def _allows_stale_redirect(row: Any) -> bool:

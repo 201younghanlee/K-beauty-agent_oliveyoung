@@ -45,7 +45,8 @@ The client uses the SDK `Storage`, `SafeAreaInsets`, and `openURL` APIs. API cal
 - A multi-brand catalog that combines maintained K-beauty records with a quality-filtered global Open Beauty Facts snapshot; global records are not presented as Korean origin
 - Daily catalog refresh workflow with validation gates and a reviewable pull request; refreshed data is never auto-merged
 - Follow-up refinement, comparison, saved products, and routine building
-- Multi-retailer offer comparison with price freshness, stock state, and affiliate disclosure
+- Multi-retailer discovery across exact product pages plus Naver Shopping, Coupang, Musinsa Beauty, and YesStyle product-name searches
+- Price freshness, stock state, exact-match labeling, and affiliate disclosure that distinguish verified offers from search fallbacks
 - Conservative product/variant identity matching for approved retailer APIs and feeds
 - Signed, expiring, exact-domain-allowlisted outbound links with anonymized click logging
 - Anonymous session, feedback, and operational metrics storage
@@ -138,6 +139,13 @@ offers and explicitly link-only retailer destinations expose a relative,
 signed `redirect_url`. A stale price/stock feed returns `null`, while an
 allowlisted link-only destination can remain available with its price and stock
 hidden. Use the supplied value as-is instead of opening catalog source URLs.
+
+When no approved exact product page is available, the service adds clearly
+labeled product-name search destinations for Naver Shopping, Coupang, Musinsa
+Beauty, and YesStyle. These links do not claim that the exact product is sold
+there and never carry a price or stock value. An approved exact page, partner
+feed, or affiliate offer for the same retailer automatically replaces its
+generic search fallback in the public response.
 
 ## Approved retailer offer sync
 

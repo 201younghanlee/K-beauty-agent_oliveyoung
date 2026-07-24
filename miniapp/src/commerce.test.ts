@@ -16,6 +16,7 @@ function offer(overrides: Partial<RetailOffer> = {}): RetailOffer {
     isStale: false,
     clickUrl: 'https://api.example.test/r/signed-token',
     isLinkOnly: true,
+    linkType: 'product_page',
     isAffiliate: true,
     ...overrides,
   };
@@ -43,5 +44,18 @@ describe('affiliate retailer calls to action', () => {
 
     expect(offerCtaLabel(unavailable)).toBe('구매 링크 준비 중');
     expect(offerCtaAriaLabel(unavailable)).toBe('쿠팡 구매 링크 준비 중');
+  });
+
+  it('labels retailer search results without claiming an exact product page', () => {
+    const search = offer({
+      retailerName: '네이버쇼핑',
+      linkType: 'retailer_search',
+      isAffiliate: false,
+    });
+
+    expect(offerCtaLabel(search)).toBe('네이버쇼핑에서 검색');
+    expect(offerCtaAriaLabel(search)).toBe(
+      '네이버쇼핑 상품명 검색 결과 열기, 토스 외부 이동',
+    );
   });
 });

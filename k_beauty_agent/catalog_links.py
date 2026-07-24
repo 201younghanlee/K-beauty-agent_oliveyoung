@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Literal
-from urllib.parse import urlparse
+from typing import Iterable, Literal
+from urllib.parse import quote_plus, urlparse
 
 from .models import Product
 from .source_adapters.security import require_https_url
@@ -14,6 +15,7 @@ CatalogLinkKind = Literal[
     "data_reference",
     "review_reference",
 ]
+RetailerLinkType = Literal["product_page", "retailer_search"]
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class CatalogLink:
     provider: str
     url: str
     source_field: str
+    link_type: RetailerLinkType = "product_page"
 
     def to_public_dict(self) -> dict[str, str]:
         return {
@@ -38,6 +41,32 @@ _RETAILERS = {
     "www.ulta.com": "Ulta Beauty",
     "www.marksandspencer.com": "Marks & Spencer",
 }
+_RETAILER_SEARCH_PATHS = {
+    ("www.oliveyoung.co.kr", "/store/search/getSearchMain.do"),
+}
+
+# These are deliberately search-result destinations, not claims that a
+# retailer currently sells the exact product. They give every catalog product
+# several places to check while keeping price, stock, and product matching
+# unknown until an approved retailer API or exact product URL confirms them.
+_RETAILER_SEARCHES: tuple[tuple[str, str], ...] = (
+    (
+        "Naver Shopping",
+        "https://search.shopping.naver.com/search/all?query={query}",
+    ),
+    (
+        "Coupang",
+        "https://www.coupang.com/np/search?q={query}",
+    ),
+    (
+        "Musinsa Beauty",
+        "https://www.musinsa.com/search/goods?keyword={query}&gf=A",
+    ),
+    (
+        "YesStyle",
+        "https://www.yesstyle.com/en/list.html?bpt=48&pn=1&q={query}",
+    ),
+)
 
 _REFERENCES: dict[str, tuple[CatalogLinkKind, str, str]] = {
     "incidecoder.com": ("ingredient_reference", "성분 정보 · INCIDecoder", "INCIDecoder"),
@@ -110,7 +139,19 @@ def catalog_links(product: Product) -> list[CatalogLink]:
                 source_field,
             )
         elif retailer:
-            link = CatalogLink("retailer", retailer, retailer, safe_url, source_field)
+            link_type = (
+                "retailer_search"
+                if (host, urlparse(safe_url).path) in _RETAILER_SEARCH_PATHS
+                else "product_page"
+            )
+            link = CatalogLink(
+                "retailer",
+                f"{retailer} 상품명 검색" if link_type == "retailer_search" else retailer,
+                retailer,
+                safe_url,
+                source_field,
+                link_type,
+            )
         elif host in _BRAND_HOSTS.get(product.brand.strip().casefold(), frozenset()):
             link = CatalogLink(
                 "brand_official",
@@ -137,6 +178,43 @@ def retailer_links(product: Product) -> list[CatalogLink]:
     return [link for link in catalog_links(product) if link.kind == "retailer"]
 
 
+def retailer_search_links(
+    product: Product,
+    *,
+    exclude_providers: Iterable[str] = (),
+) -> list[CatalogLink]:
+    """Return clearly labeled retailer search pages for product discovery.
+
+    Search links never carry a price, stock, availability, or exact-match
+    claim. Exact product pages and approved affiliate/feed offers remain the
+    preferred destinations when available.
+    """
+
+    query = _retailer_search_query(product)
+    if not query:
+        return []
+    excluded = {provider.strip().casefold() for provider in exclude_providers if provider.strip()}
+    encoded_query = quote_plus(query)
+    links: list[CatalogLink] = []
+    for provider, template in _RETAILER_SEARCHES:
+        if provider.casefold() in excluded:
+            continue
+        safe_url = _safe_https_url(template.format(query=encoded_query))
+        if not safe_url:
+            continue
+        links.append(
+            CatalogLink(
+                kind="retailer",
+                label=f"{provider} 상품명 검색",
+                provider=provider,
+                url=safe_url,
+                source_field="retailer_search",
+                link_type="retailer_search",
+            )
+        )
+    return links
+
+
 def information_links(product: Product) -> list[CatalogLink]:
     links: list[CatalogLink] = []
     seen_providers: set[tuple[CatalogLinkKind, str]] = set()
@@ -149,6 +227,16 @@ def information_links(product: Product) -> list[CatalogLink]:
         seen_providers.add(provider_key)
         links.append(link)
     return links
+
+
+def _retailer_search_query(product: Product) -> str:
+    raw_query = " ".join(
+        part.strip()
+        for part in (product.brand, product.name)
+        if part and part.strip()
+    )
+    without_controls = re.sub(r"[\x00-\x1f\x7f]+", " ", raw_query)
+    return re.sub(r"\s+", " ", without_controls).strip()[:160]
 
 
 def _safe_https_url(value: str | None) -> str | None:
