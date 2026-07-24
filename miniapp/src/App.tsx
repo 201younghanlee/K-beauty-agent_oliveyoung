@@ -933,13 +933,13 @@ function VideoReviewSection({
         <YouTubeBrandLink onOpen={onOpen} />
         <div>
           <strong id={`${sectionId}-title`}>이 제품을 다룬 영상</strong>
-          <p>추천 제품과 관련된 공개 YouTube 영상을 바로 확인해 보세요.</p>
+          <p>한국어 후기를 우선으로 찾아 관련 YouTube 영상을 보여드려요.</p>
         </div>
       </div>
 
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {loading
-          ? 'YouTube에서 관련 영상을 찾고 있어요.'
+          ? 'YouTube에서 한국어 후기를 우선으로 찾고 있어요.'
           : error
             ? ''
             : reviews

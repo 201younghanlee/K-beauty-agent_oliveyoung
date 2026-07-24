@@ -48,15 +48,19 @@ def test_without_api_key_returns_safe_product_specific_youtube_search() -> None:
     service.close()
 
 
-def test_review_query_uses_bilingual_alternatives_without_repeating_brand() -> None:
+def test_review_query_prefers_localized_korean_name() -> None:
     query = _review_query(_product())
 
-    assert query == (
-        "라운드랩 1025 독도 클렌저 후기|"
-        "Round Lab 1025 Dokdo Cleanser review"
-    )
-    assert query.count("Round Lab") == 1
+    assert query == "라운드랩 1025 독도 클렌저 후기"
+    assert "review" not in query.casefold()
     assert len(query) <= 240
+
+
+def test_review_query_uses_korean_intent_when_localized_name_is_missing() -> None:
+    query = _review_query(replace(_product(), display_name_ko=None))
+
+    assert query == "Round Lab 1025 Dokdo Cleanser 후기"
+    assert "review" not in query.casefold()
 
 
 def test_relevance_filter_requires_product_identity_and_review_intent() -> None:
@@ -202,7 +206,7 @@ def test_relevance_filter_accepts_multiword_category_forms(
     )
 
 
-def test_relevance_filter_preserves_youtube_search_order() -> None:
+def test_relevance_filter_prioritizes_korean_videos_and_preserves_tier_order() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/videos")
         return httpx.Response(
@@ -224,8 +228,20 @@ def test_relevance_filter_preserves_youtube_search_order() -> None:
                     {
                         "id": "exactfull01",
                         "snippet": {
-                            "title": "Round Lab 1025 Dokdo Cleanser honest review",
+                            "title": "라운드랩 1025 독도 클렌저 솔직 후기",
                             "channelTitle": "Creator",
+                        },
+                        "status": {
+                            "privacyStatus": "public",
+                            "embeddable": True,
+                            "madeForKids": False,
+                        },
+                    },
+                    {
+                        "id": "koreansame1",
+                        "snippet": {
+                            "title": "라운드랩 독도 클렌저 한달 사용 후기",
+                            "channelTitle": "뷰티 채널",
                         },
                         "status": {
                             "privacyStatus": "public",
@@ -266,13 +282,68 @@ def test_relevance_filter_preserves_youtube_search_order() -> None:
         [
             {"id": {"videoId": "partial0001"}, "snippet": {}},
             {"id": {"videoId": "exactfull01"}, "snippet": {}},
+            {"id": {"videoId": "koreansame1"}, "snippet": {}},
             {"id": {"videoId": "madeforkid1"}, "snippet": {}},
             {"id": {"videoId": "unknownmfk1"}, "snippet": {}},
         ],
         _product(),
     )
 
-    assert [video["video_id"] for video in videos] == ["partial0001", "exactfull01"]
+    assert [video["video_id"] for video in videos] == [
+        "exactfull01",
+        "koreansame1",
+        "partial0001",
+    ]
+    client.close()
+
+
+def test_declared_korean_audio_is_prioritized_even_with_english_title() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/videos")
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "id": "hangultitle",
+                        "snippet": {
+                            "title": "라운드랩 1025 독도 클렌저 후기",
+                            "channelTitle": "뷰티 채널",
+                        },
+                        "status": {
+                            "privacyStatus": "public",
+                            "embeddable": True,
+                            "madeForKids": False,
+                        },
+                    },
+                    {
+                        "id": "koreanaudio",
+                        "snippet": {
+                            "title": "Round Lab 1025 Dokdo Cleanser review",
+                            "channelTitle": "Creator",
+                            "defaultAudioLanguage": "ko-KR",
+                        },
+                        "status": {
+                            "privacyStatus": "public",
+                            "embeddable": True,
+                            "madeForKids": False,
+                        },
+                    },
+                ]
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    service = YouTubeReviewService("key", client=client)
+    videos = service._video_details(
+        [
+            {"id": {"videoId": "hangultitle"}, "snippet": {}},
+            {"id": {"videoId": "koreanaudio"}, "snippet": {}},
+        ],
+        _product(),
+    )
+
+    assert [video["video_id"] for video in videos] == ["koreanaudio", "hangultitle"]
     client.close()
 
 
@@ -288,7 +359,9 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
             assert request.url.params["videoEmbeddable"] == "true"
             assert request.url.params["videoSyndicated"] == "true"
             assert request.url.params["safeSearch"] == "strict"
-            assert "Round Lab" in request.url.params["q"]
+            assert request.url.params["regionCode"] == "KR"
+            assert request.url.params["relevanceLanguage"] == "ko"
+            assert request.url.params["q"] == "라운드랩 1025 독도 클렌저 후기"
             assert request.url.params["maxResults"] == "10"
             assert "channelId" in request.url.params["fields"]
             return httpx.Response(
@@ -307,6 +380,8 @@ def test_api_results_are_verified_enriched_and_cached() -> None:
             assert "channelId" in request.url.params["fields"]
             assert "viewCount" in request.url.params["fields"]
             assert "madeForKids" in request.url.params["fields"]
+            assert "defaultLanguage" in request.url.params["fields"]
+            assert "defaultAudioLanguage" in request.url.params["fields"]
             return httpx.Response(
                 200,
                 json={
