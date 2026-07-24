@@ -1520,7 +1520,7 @@ function OfferComparisonDialog({
           </button>
         </header>
         <p id="offer-dialog-description" className="offer-dialog-product-name">{productDisplayName(item)}</p>
-        <p className="external-transition-notice">검증된 직접 상품 페이지를 먼저 보여주고, 없으면 브랜드와 상품명으로 검색한 쇼핑 결과를 연결해요. 버튼을 누르면 토스를 벗어나며 실제 판매 여부·가격·재고는 해당 사이트에서 확인해 주세요.</p>
+        <p className="external-transition-notice">검증된 직접 상품 페이지를 먼저 보여주고, 없으면 한국어 상품명 또는 한국어 제품군을 앞세운 쇼핑 검색 결과를 연결해요. 버튼을 누르면 토스를 벗어나며 실제 판매 여부·가격·재고는 해당 사이트에서 확인해 주세요.</p>
 
         {loading && offers.length === 0 ? (
           <div className="offer-loading" role="status">최신 가격과 재고를 확인하고 있어요.</div>
@@ -1557,11 +1557,11 @@ function OfferComparisonDialog({
                   {offer.isLinkOnly ? (
                     <>
                       <span className="availability availability--unknown">
-                        {offer.linkType === 'retailer_search' ? '상품명 검색' : '판매처에서 확인'}
+                        {offer.linkType === 'retailer_search' ? '한국어 상품 검색' : '판매처에서 확인'}
                       </span>
                       <span>
                         {offer.linkType === 'retailer_search'
-                          ? '검색 결과에서 정확한 상품인지와 실제 판매 여부·가격·재고를 확인해 주세요.'
+                          ? '한국어 검색 결과에서 정확한 상품인지와 실제 판매 여부·가격·재고를 확인해 주세요.'
                           : '가격·재고는 판매처의 최신 정보를 확인해 주세요.'}
                       </span>
                     </>

@@ -18,6 +18,7 @@ def _product() -> Product:
     return Product(
         id="etude-soonjung",
         name="SoonJung 2x Barrier Intensive Cream",
+        display_name_ko="에뛰드 순정 2x 베리어 인텐시브 크림",
         brand="ETUDE",
         category="moisturizer",
         country="Korea",
@@ -93,6 +94,7 @@ def test_retailer_search_links_expand_discovery_without_claiming_an_exact_listin
         _product(),
         brand="ETUDE",
         name="SoonJung 2x Barrier\nIntensive Cream",
+        display_name_ko="에뛰드 순정 2x 베리어\n인텐시브 크림",
     )
 
     links = retailer_search_links(product)
@@ -112,7 +114,39 @@ def test_retailer_search_links_expand_discovery_without_claiming_an_exact_listin
     for link in links:
         params = parse_qs(urlparse(link.url).query)
         queries.append(next(params[key][0] for key in ("query", "q", "keyword") if key in params))
-    assert queries == ["ETUDE SoonJung 2x Barrier Intensive Cream"] * 4
+    assert queries == ["에뛰드 순정 2x 베리어 인텐시브 크림"] * 4
+
+
+def test_retailer_search_uses_korean_category_when_localized_name_is_missing() -> None:
+    product = replace(
+        _product(),
+        name="ETUDE SoonJung 2x Barrier Intensive Cream",
+        display_name_ko=None,
+    )
+
+    links = retailer_search_links(product)
+    queries = []
+    for link in links:
+        params = parse_qs(urlparse(link.url).query)
+        queries.append(next(params[key][0] for key in ("query", "q", "keyword") if key in params))
+
+    assert queries == ["보습제 ETUDE SoonJung 2x Barrier Intensive Cream"] * 4
+    assert all(any("가" <= character <= "힣" for character in query) for query in queries)
+
+
+def test_untranslated_retailer_search_starts_with_korean_product_type() -> None:
+    product = replace(
+        _product(),
+        brand="Aroma zone",
+        name="Gel douche sorbet de verveine",
+        display_name_ko=None,
+        category="body_cleanser",
+    )
+
+    link = retailer_search_links(product)[0]
+    query = parse_qs(urlparse(link.url).query)["query"][0]
+
+    assert query == "바디워시 Aroma zone Gel douche sorbet de verveine"
 
 
 def test_retailer_search_links_can_skip_a_retailer_with_a_specific_offer() -> None:
