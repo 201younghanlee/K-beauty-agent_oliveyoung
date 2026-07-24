@@ -118,6 +118,10 @@ def active_affiliate_source_ids() -> set[str]:
     invalid = sorted(value for value in values if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", value))
     if invalid:
         raise ValueError("ACTIVE_AFFILIATE_SOURCE_IDS contains an invalid source ID")
+    if {"coupang_partner_links", "coupang_partners"} <= values:
+        raise ValueError(
+            "Activate either coupang_partner_links or coupang_partners, not both"
+        )
     return values
 
 

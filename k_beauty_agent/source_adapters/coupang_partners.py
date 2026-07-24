@@ -11,6 +11,10 @@ from urllib.parse import urlencode, urlparse
 import httpx
 
 from .base import SourceOffer, SourceSyncResult
+from .coupang_partner_links import (
+    COUPANG_PARTNERS_DISCLOSURE_EN,
+    COUPANG_PARTNERS_DISCLOSURE_KO,
+)
 from .security import host_matches, require_https_url, require_public_dns_resolution
 
 
@@ -29,6 +33,9 @@ class CoupangPartnersAdapter:
     """
 
     source_id = "coupang_partners"
+    affiliate_program_name = "쿠팡 파트너스"
+    affiliate_disclosure_ko = COUPANG_PARTNERS_DISCLOSURE_KO
+    affiliate_disclosure_en = COUPANG_PARTNERS_DISCLOSURE_EN
 
     def __init__(
         self,
