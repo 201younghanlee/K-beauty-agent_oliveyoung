@@ -500,6 +500,7 @@ describe('normalizeOffersResponse', () => {
       checkedAt: '2026-07-20T10:30:00Z',
       clickUrl: 'https://k-beauty-recommendation-agent-gafd.onrender.com/r/signed-token',
       isLinkOnly: false,
+      linkType: 'product_page',
       isAffiliate: true,
       affiliateLabel: '광고·제휴',
       affiliateDisclosure: '구매 시 수수료를 받을 수 있어요.',
@@ -547,7 +548,31 @@ describe('normalizeOffersResponse', () => {
       priceKrw: undefined,
       isStale: true,
       isLinkOnly: true,
+      linkType: 'product_page',
       clickUrl: 'https://k-beauty-recommendation-agent-gafd.onrender.com/r/signed-link-only-token',
+    }));
+  });
+
+  it('preserves the retailer-search link type for truthful customer copy', () => {
+    const offers = normalizeOffersResponse({
+      offers: [{
+        id: 'naver-search',
+        retailer: { name: 'Naver Shopping' },
+        price: { amount: null, currency: 'KRW', status: 'unknown' },
+        stock_status: 'unknown',
+        freshness: { status: 'unknown' },
+        redirect_url: '/r/signed-search-token',
+        link_only: true,
+        link_type: 'retailer_search',
+        affiliate: { active: false },
+      }],
+    });
+
+    expect(offers[0]).toEqual(expect.objectContaining({
+      retailerName: 'Naver Shopping',
+      isLinkOnly: true,
+      linkType: 'retailer_search',
+      isAffiliate: false,
     }));
   });
 

@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
-from k_beauty_agent.catalog_links import information_links, retailer_links
+from k_beauty_agent.catalog_links import (
+    information_links,
+    retailer_links,
+    retailer_search_links,
+)
 from k_beauty_agent.database import ProductDatabase
 from k_beauty_agent.models import Product
 from k_beauty_agent.serializers import product_to_v2_dict
@@ -37,6 +42,10 @@ def test_catalog_links_separate_retailers_from_product_information() -> None:
     assert [(link.provider, link.source_field) for link in retailers] == [
         ("Olive Young", "purchase_url"),
         ("Ulta Beauty", "source_url"),
+    ]
+    assert [link.link_type for link in retailers] == [
+        "retailer_search",
+        "product_page",
     ]
     assert [(link.kind, link.provider) for link in information] == [
         ("brand_official", "ETUDE"),
@@ -77,6 +86,40 @@ def test_marks_and_spencer_is_a_retailer_but_brand_page_is_information() -> None
 
     assert [link.provider for link in retailer_links(product)] == ["Marks & Spencer"]
     assert [link.kind for link in information_links(product)] == ["brand_official"]
+
+
+def test_retailer_search_links_expand_discovery_without_claiming_an_exact_listing() -> None:
+    product = replace(
+        _product(),
+        brand="ETUDE",
+        name="SoonJung 2x Barrier\nIntensive Cream",
+    )
+
+    links = retailer_search_links(product)
+
+    assert [link.provider for link in links] == [
+        "Naver Shopping",
+        "Coupang",
+        "Musinsa Beauty",
+        "YesStyle",
+    ]
+    assert all(link.kind == "retailer" for link in links)
+    assert all(link.link_type == "retailer_search" for link in links)
+    assert all(link.source_field == "retailer_search" for link in links)
+    assert all(link.provider != "Olive Young" for link in links)
+    assert all(link.url.startswith("https://") for link in links)
+    queries = []
+    for link in links:
+        params = parse_qs(urlparse(link.url).query)
+        queries.append(next(params[key][0] for key in ("query", "q", "keyword") if key in params))
+    assert queries == ["ETUDE SoonJung 2x Barrier Intensive Cream"] * 4
+
+
+def test_retailer_search_links_can_skip_a_retailer_with_a_specific_offer() -> None:
+    links = retailer_search_links(_product(), exclude_providers={"coupang"})
+
+    assert "Coupang" not in {link.provider for link in links}
+    assert len(links) == 3
 
 
 def test_v2_serializer_exposes_information_links_without_raw_purchase_fields() -> None:

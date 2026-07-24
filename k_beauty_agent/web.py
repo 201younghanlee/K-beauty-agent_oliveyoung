@@ -256,7 +256,11 @@ app.add_middleware(
 store = SQLiteStore(sqlite_path_from_url())
 store.apply_public_profile_minimization_migration()
 agent = _build_agent()
-commerce = CommerceService(store, affiliate_redirect_secret())
+commerce = CommerceService(
+    store,
+    affiliate_redirect_secret(),
+    include_retailer_searches=True,
+)
 youtube_reviews = YouTubeReviewService(
     youtube_api_key(),
     daily_search_limit=youtube_search_daily_limit(),

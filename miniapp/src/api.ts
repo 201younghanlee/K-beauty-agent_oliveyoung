@@ -565,6 +565,9 @@ function normalizeOffer(value: unknown, index: number): RetailOffer | null {
       ?? value.redirectUrl,
     ),
     isLinkOnly: asBoolean(value.link_only ?? value.linkOnly) ?? false,
+    linkType: firstText(value.link_type, value.linkType) === 'retailer_search'
+      ? 'retailer_search'
+      : 'product_page',
     isAffiliate: affiliate ?? relationship === 'affiliate',
     affiliateLabel: firstText(
       value.affiliate_label,

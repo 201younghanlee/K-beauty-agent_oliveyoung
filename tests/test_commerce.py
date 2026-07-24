@@ -97,9 +97,9 @@ def test_legacy_catalog_adds_verified_retailers_without_reusing_oliveyoung_price
         category="moisturizer",
         country="Korea",
         ingredients=("Panthenol",),
-        purchase_url="https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query=soonjung",
+        purchase_url="https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=A0001",
         retailer_name="Olive Young",
-        oliveyoung_url="https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query=soonjung",
+        oliveyoung_url="https://www.oliveyoung.co.kr/store/goods/getGoodsDetail.do?goodsNo=A0001",
         price_krw=23_000,
         price_checked_at="2026-07-20T00:00:00Z",
         source_url="https://www.ulta.com/p/soonjung-2x-barrier-intensive-cream-pimprod2049666",
@@ -135,6 +135,103 @@ def test_legacy_catalog_adds_verified_retailers_without_reusing_oliveyoung_price
     assert all("incidecoder.com" not in row["destination_url"] for row in rows)
     assert all("etude.com" not in row["destination_url"] for row in rows)
     assert second == {"products_seen": 1, "offers_seen": 2, "observations_written": 0}
+
+
+def test_retailer_search_page_never_reuses_an_old_catalog_price(
+    tmp_path: Path,
+) -> None:
+    product = replace(
+        _product(),
+        purchase_url="https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query=example",
+        oliveyoung_url="https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query=example",
+        price_krw=19_000,
+        price_checked_at="2026-07-20T00:00:00Z",
+    )
+    _, service = _service(tmp_path, [product])
+
+    offer = service.offers_for_product(product.id)["offers"][0]
+
+    assert offer["retailer"]["name"] == "Olive Young"
+    assert offer["link_type"] == "retailer_search"
+    assert offer["price"]["amount"] is None
+    assert offer["freshness"]["checked_at"] is None
+
+
+def test_retailer_search_fallbacks_expand_every_product_without_price_or_stock_claims(
+    tmp_path: Path,
+) -> None:
+    product = replace(
+        _product(),
+        purchase_url=None,
+        retailer_name=None,
+        price_krw=None,
+        price_checked_at=None,
+    )
+    store = SQLiteStore(tmp_path / "retailer-search.sqlite3")
+    service = CommerceService(
+        store,
+        "commerce-test-signing-secret",
+        include_retailer_searches=True,
+    )
+
+    report = service.sync_legacy_catalog([product])
+    bundle = service.offers_for_product(product.id)
+
+    assert report == {"products_seen": 1, "offers_seen": 4, "observations_written": 4}
+    assert bundle["summary"]["offer_count"] == 4
+    assert bundle["summary"]["retailer_count"] == 4
+    assert [offer["retailer"]["name"] for offer in bundle["offers"]] == [
+        "Coupang",
+        "Musinsa Beauty",
+        "Naver Shopping",
+        "YesStyle",
+    ]
+    assert all(offer["link_type"] == "retailer_search" for offer in bundle["offers"])
+    assert all(offer["link_only"] is True for offer in bundle["offers"])
+    assert all(offer["price"]["amount"] is None for offer in bundle["offers"])
+    assert all(offer["stock_status"] == "unknown" for offer in bundle["offers"])
+    assert all(offer["affiliate"]["active"] is False for offer in bundle["offers"])
+    assert all(offer["redirect_url"].startswith("/r/") for offer in bundle["offers"])
+
+
+def test_specific_retailer_offer_replaces_same_retailer_search_fallback(
+    tmp_path: Path,
+) -> None:
+    product = replace(_product(), purchase_url=None, retailer_name=None)
+    store = SQLiteStore(tmp_path / "retailer-specific.sqlite3")
+    service = CommerceService(
+        store,
+        "commerce-test-signing-secret",
+        include_retailer_searches=True,
+    )
+    service.sync_legacy_catalog([product])
+    with store.connect() as connection:
+        coupang_id = connection.execute(
+            "SELECT id FROM retailers WHERE display_name = 'Coupang'"
+        ).fetchone()["id"]
+    service.upsert_offer(
+        product_id=product.id,
+        retailer_id=coupang_id,
+        destination_url="https://www.coupang.com/vp/products/123456",
+        source_kind="approved_partner_feed",
+        offer_id="coupang-specific",
+        price_amount=18_000,
+        stock_status="in_stock",
+        checked_at=1_784_505_600,
+        ttl_seconds=86_400,
+    )
+
+    bundle = service.offers_for_product(product.id, now=1_784_505_700)
+    coupang_offers = [
+        offer for offer in bundle["offers"] if offer["retailer"]["name"] == "Coupang"
+    ]
+
+    assert bundle["summary"]["offer_count"] == 4
+    assert bundle["summary"]["retailer_count"] == 4
+    assert len(coupang_offers) == 1
+    assert coupang_offers[0]["id"] == "coupang-specific"
+    assert coupang_offers[0]["link_type"] == "product_page"
+    assert coupang_offers[0]["price"]["amount"] == 18_000
 
 
 def test_open_beauty_facts_gtin_is_seeded_for_first_retailer_match(tmp_path: Path) -> None:

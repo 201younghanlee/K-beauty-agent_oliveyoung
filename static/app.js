@@ -99,8 +99,8 @@ const uiText = {
     clearAll: "전체 삭제",
     compareSelected: "선택 제품 비교",
     budgetNone: "제한 없음",
-    compareRetailers: "판매처 비교",
-    offerModalTitle: "판매처와 가격",
+    compareRetailers: "판매처·쇼핑 검색",
+    offerModalTitle: "직접 상품 페이지와 검색 결과",
     offerLoading: "최신 판매처 정보를 확인하는 중입니다...",
     offerLoadFailed: "판매처 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
     offerEmpty: "현재 비교할 수 있는 판매처 정보가 없습니다.",
@@ -120,6 +120,10 @@ const uiText = {
     affiliateTitle: "광고·제휴 안내",
     affiliateDisclosure: "일부 판매처 링크를 통해 구매하면 서비스가 수수료를 받을 수 있습니다. 제휴 여부와 수수료는 추천 순위에 영향을 주지 않습니다.",
     goToRetailer: "판매처에서 확인",
+    searchAtRetailer: "{retailer}에서 검색",
+    retailerSearchBadge: "상품명 검색",
+    retailerSearchPrice: "검색 결과에서 가격 확인",
+    retailerSearchNote: "정확한 상품인지와 실제 판매 여부·가격·재고를 검색 결과에서 확인해 주세요.",
     noTrackedLink: "안전한 구매 링크 미제공",
     listPrice: "정가 {price}",
     offerSummaryUnknown: "판매처에서 현재 가격과 재고를 다시 확인해 주세요.",
@@ -197,8 +201,8 @@ const uiText = {
     clearAll: "Clear all",
     compareSelected: "Compare selected",
     budgetNone: "No limit",
-    compareRetailers: "Compare retailers",
-    offerModalTitle: "Retailers and prices",
+    compareRetailers: "Retailers and shopping search",
+    offerModalTitle: "Direct product pages and search results",
     offerLoading: "Checking the latest retailer information...",
     offerLoadFailed: "Could not load retailer information. Please try again shortly.",
     offerEmpty: "There are no retailer offers available to compare right now.",
@@ -218,6 +222,10 @@ const uiText = {
     affiliateTitle: "Ad and affiliate disclosure",
     affiliateDisclosure: "We may earn a commission when you purchase through some retailer links. Affiliate status and commission do not affect recommendation ranking.",
     goToRetailer: "Check at retailer",
+    searchAtRetailer: "Search at {retailer}",
+    retailerSearchBadge: "Product search",
+    retailerSearchPrice: "Check price in search results",
+    retailerSearchNote: "Confirm the exact product, availability, price, and stock in the search results.",
     noTrackedLink: "Secure purchase link unavailable",
     listPrice: "List {price}",
     offerSummaryUnknown: "Confirm the current price and stock with the retailer.",
@@ -947,6 +955,10 @@ function normalizeOffer(raw, index = 0) {
       freshness.checked_at,
     ),
     clickUrl: backendRedirectUrl(raw.redirect_url ?? raw.redirectUrl ?? raw.click_url ?? raw.clickUrl),
+    isLinkOnly: booleanValue(raw.link_only ?? raw.linkOnly) || false,
+    linkType: firstTextValue(raw.link_type, raw.linkType) === "retailer_search"
+      ? "retailer_search"
+      : "product_page",
     isAffiliate: affiliate ?? relationship === "affiliate",
     affiliateLabel: firstTextValue(
       raw.affiliate_label,
@@ -1923,10 +1935,18 @@ function renderOfferModal(product, statusMessage = "") {
 }
 
 function renderOfferRow(offer) {
-  const priceText = offer.priceAmount !== null ? money(offer.priceAmount, offer.currency) : text("needPrice");
+  const isRetailerSearch = offer.linkType === "retailer_search";
+  const priceText = isRetailerSearch
+    ? text("retailerSearchPrice")
+    : offer.priceAmount !== null
+      ? money(offer.priceAmount, offer.currency)
+      : text("needPrice");
   const showListPrice = offer.listPriceAmount !== null && offer.priceAmount !== null && offer.listPriceAmount > offer.priceAmount;
+  const outboundLabel = isRetailerSearch
+    ? text("searchAtRetailer").replace("{retailer}", offer.retailerName)
+    : text("goToRetailer");
   const clickControl = offer.clickUrl
-    ? `<a class="primary offer-outbound" href="${escapeHtml(offer.clickUrl)}" target="_blank" rel="nofollow sponsored noreferrer">${text("goToRetailer")}<i data-lucide="external-link"></i></a>`
+    ? `<a class="primary offer-outbound" href="${escapeHtml(offer.clickUrl)}" target="_blank" rel="nofollow sponsored noreferrer">${escapeHtml(outboundLabel)}<i data-lucide="external-link"></i></a>`
     : `<span class="offer-outbound disabled" aria-disabled="true">${text("noTrackedLink")}</span>`;
   return `
     <article class="offer-row ${offer.freshness === "stale" ? "is-stale" : ""}">
@@ -1936,14 +1956,20 @@ function renderOfferRow(offer) {
           ${offer.isAffiliate ? `<span class="affiliate-badge">${escapeHtml(offer.affiliateLabel || text("affiliateBadge"))}</span>` : ""}
         </div>
         <div class="offer-badges">
-          <span class="availability-badge ${offer.availability}">${availabilityLabel(offer.availability)}</span>
-          <span class="freshness-badge ${offer.freshness}">${freshnessLabel(offer.freshness)}</span>
+          ${isRetailerSearch
+            ? `<span class="availability-badge unknown">${text("retailerSearchBadge")}</span>`
+            : `<span class="availability-badge ${offer.availability}">${availabilityLabel(offer.availability)}</span>
+               <span class="freshness-badge ${offer.freshness}">${freshnessLabel(offer.freshness)}</span>`}
         </div>
       </div>
       <div class="offer-price-block">
         <strong>${priceText}</strong>
         ${showListPrice ? `<span>${text("listPrice").replace("{price}", money(offer.listPriceAmount, offer.currency))}</span>` : ""}
-        <small>${escapeHtml(offer.checkedAt ? text("checkedAt").replace("{date}", formatOfferCheckedAt(offer.checkedAt)) : text("unknownFreshness"))}</small>
+        <small>${escapeHtml(isRetailerSearch
+          ? text("retailerSearchNote")
+          : offer.checkedAt
+            ? text("checkedAt").replace("{date}", formatOfferCheckedAt(offer.checkedAt))
+            : text("unknownFreshness"))}</small>
       </div>
       ${clickControl}
     </article>
