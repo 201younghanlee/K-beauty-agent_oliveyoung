@@ -57,6 +57,12 @@ def test_affiliate_sources_require_explicit_safe_ids(monkeypatch) -> None:
     monkeypatch.setenv("ACTIVE_AFFILIATE_SOURCE_IDS", "coupang_partners,not allowed")
     with pytest.raises(ValueError, match="invalid source ID"):
         active_affiliate_source_ids()
+    monkeypatch.setenv(
+        "ACTIVE_AFFILIATE_SOURCE_IDS",
+        "coupang_partner_links,coupang_partners",
+    )
+    with pytest.raises(ValueError, match="either coupang_partner_links or coupang_partners"):
+        active_affiliate_source_ids()
 
 
 def test_production_secrets_must_be_strong_and_distinct(monkeypatch) -> None:

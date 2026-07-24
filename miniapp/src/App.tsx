@@ -18,6 +18,11 @@ import {
   requestRecommendations,
   termsOfUseUrl,
 } from './api';
+import {
+  AFFILIATE_PRE_DISCLOSURE_KO,
+  offerCtaAriaLabel,
+  offerCtaLabel,
+} from './commerce';
 import { openExternalUrl } from './external';
 import { deleteUserData } from './privacy';
 import { hasVerifiedReviewMetrics, sourceUrlIsProductSource } from './provenance';
@@ -569,7 +574,12 @@ function sourceAttributionUrl(product: Product): string | undefined {
   return OBF_DATA_URL;
 }
 
-function offerSummary(product: Product): { lowestPrice?: number; currency?: string; retailerCount: number } {
+function offerSummary(product: Product): {
+  lowestPrice?: number;
+  currency?: string;
+  retailerCount: number;
+  hasAffiliateOffers: boolean;
+} {
   const freshOffers = product.offers.filter(
     (offer) => !offer.isStale
       && offer.availability !== 'out_of_stock'
@@ -585,6 +595,8 @@ function offerSummary(product: Product): { lowestPrice?: number; currency?: stri
     currency: product.commerce?.lowestFreshPriceCurrency ?? lowestOffer?.currency,
     retailerCount: product.commerce?.retailerCount
       ?? new Set(product.offers.map((offer) => offer.retailerId || offer.retailerName)).size,
+    hasAffiliateOffers: product.commerce?.hasAffiliateOffers
+      ?? product.offers.some((offer) => offer.isAffiliate),
   };
 }
 
@@ -1323,6 +1335,9 @@ function ProductCard({
             : canOpenInformation ? '제품 정보 보기' : canCompareRetailers ? '판매처 확인' : '판매처 준비 중'}
           <ArrowIcon />
         </button>
+        {summary.hasAffiliateOffers && (
+          <p className="affiliate-pre-disclosure">{AFFILIATE_PRE_DISCLOSURE_KO}</p>
+        )}
       </div>
     </article>
   );
@@ -1466,7 +1481,7 @@ function OfferComparisonDialog({
           </button>
         </header>
         <p id="offer-dialog-description" className="offer-dialog-product-name">{productDisplayName(item)}</p>
-        <p className="external-transition-notice">구매 버튼을 누르면 토스를 벗어나 판매처 웹사이트로 이동해요. 실제 가격과 재고를 다시 확인해 주세요.</p>
+        <p className="external-transition-notice">상품 확인 버튼을 누르면 토스를 벗어나 판매처 웹사이트로 이동해요. 실제 가격과 재고를 다시 확인해 주세요.</p>
 
         {loading && offers.length === 0 ? (
           <div className="offer-loading" role="status">최신 가격과 재고를 확인하고 있어요.</div>
@@ -1520,6 +1535,7 @@ function OfferComparisonDialog({
                   type="button"
                   className="offer-open-button"
                   disabled={!offer.clickUrl}
+                  aria-label={offerCtaAriaLabel(offer)}
                   onClick={() => {
                     if (!offer.clickUrl) {
                       return;
@@ -1529,9 +1545,7 @@ function OfferComparisonDialog({
                     });
                   }}
                 >
-                  {offer.clickUrl
-                    ? offer.isLinkOnly ? `${offer.retailerName}에서 보기` : '판매처에서 확인'
-                    : '구매 링크 준비 중'}
+                  {offerCtaLabel(offer)}
                   {offer.clickUrl && <ArrowIcon />}
                 </button>
               </article>

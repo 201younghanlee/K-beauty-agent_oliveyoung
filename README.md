@@ -231,9 +231,10 @@ app/ and agent/     compact reference API retained for portfolio examples
 | `AFFILIATE_WEBHOOK_SECRET` | HMAC key for the optional normalized conversion callback | generated |
 | `PRODUCT_SOURCE` | `catalog_snapshot`, `curated`, or legacy experimental `live_keyless` data layer | `catalog_snapshot` |
 | `DATABASE_URL` | SQLite storage URL | `/tmp` on free Render |
-| `COUPANG_PARTNERS_ACCESS_KEY` / `COUPANG_PARTNERS_SECRET_KEY` | Enables the official Coupang Partners adapter after account approval | unset |
+| `COUPANG_PARTNERS_LINKS_JSON` | Portal-created Coupang Partners links mapped to exact catalog product IDs for the pre-API launch phase | `[]` |
+| `COUPANG_PARTNERS_ACCESS_KEY` / `COUPANG_PARTNERS_SECRET_KEY` | Enables the official Coupang Partners API adapter after final approval | unset |
 | `PARTNER_FEEDS_JSON` | Approved normalized feeds and exact feed/destination host allowlists | `[]` |
-| `ACTIVE_AFFILIATE_SOURCE_IDS` | Comma-separated source IDs explicitly approved for affiliate activation | empty |
+| `ACTIVE_AFFILIATE_SOURCE_IDS` | Comma-separated source IDs explicitly approved for activation; use either `coupang_partner_links` for portal links or `coupang_partners` for the API, never both | empty |
 | `CORS_ALLOW_ORIGINS` | Comma-separated trusted browser origins | Apps in Toss production and QR-test origins only |
 | `RECOMMEND_RATE_LIMIT_REQUESTS` | Recommendation requests allowed per rate-limit window | `30` |
 | `RECOMMEND_RATE_LIMIT_WINDOW_SECONDS` | Recommendation rate-limit window | `60` |

@@ -15,6 +15,7 @@ from .commerce import DISCLOSURE_EN, DISCLOSURE_KO, CommerceService
 from .identity_resolution import MatchDecision, normalize_gtin, resolve_offer
 from .models import Product
 from .source_adapters.base import RetailerSource, SourceOffer, SourceSyncResult
+from .source_adapters.coupang_partner_links import CoupangPartnerLinksAdapter
 from .source_adapters.registry import configured_sources
 from .source_adapters.security import require_https_url
 
@@ -115,13 +116,19 @@ def sync_retailer_sources(
         reports: list[SourceIngestionReport] = []
         with _SYNC_LOCK:
             for source in selected_sources:
+                source_limit = max(
+                    safe_limit,
+                    int(getattr(source, "required_sync_limit", 0)),
+                )
+                if source_limit > MAX_SOURCE_LIMIT:
+                    raise ValueError("Retailer source requires more offers than one sync can process")
                 reports.append(
                     _sync_one_source(
                         commerce,
                         product_list,
                         source,
                         query=normalized_query,
-                        limit=safe_limit,
+                        limit=source_limit,
                         explicit_product_id=explicit_product_id,
                         identifiers=identifier_map,
                         affiliate_approved=str(source.source_id).strip() in approved_affiliate_sources,
@@ -161,6 +168,11 @@ def _sync_one_source(
     try:
         if not source.enabled:
             raise RuntimeError("Retailer source is not enabled by its approved configuration")
+        configured_product_ids = _trusted_canonical_product_ids(source, products)
+        if configured_product_ids and explicit_product_id is not None:
+            raise ValueError(
+                "A source with configured product links cannot use a global explicit_product_id"
+            )
         result = source.fetch(query, limit=limit)
         _validate_result_identity(source_id, result)
         fetched_at = _valid_timestamp(result.fetched_at, "source fetched_at")
@@ -174,6 +186,7 @@ def _sync_one_source(
             result,
             products,
             explicit_product_id=explicit_product_id,
+            configured_product_ids=configured_product_ids,
             identifiers=identifiers,
         )
         review_candidates = sum(not item.persists for item in prepared)
@@ -185,7 +198,7 @@ def _sync_one_source(
 
         linked = [item for item in prepared if item.persists]
         retailer_specs = _retailer_specs(commerce, source_id, linked)
-        program_specs = _affiliate_program_specs(commerce, source_id, linked)
+        program_specs = _affiliate_program_specs(commerce, source_id, linked, source=source)
         program_statuses = {
             program_id: (
                 "suspended"
@@ -203,7 +216,18 @@ def _sync_one_source(
         }
         deactivate_offer_ids = _affiliate_offer_ids(commerce, inactive_programs)
         retired_domain_offer_ids = _retired_domain_offer_ids(commerce, retailer_specs)
-        offers_to_deactivate = deactivate_offer_ids | retired_domain_offer_ids
+        authoritative_offer_ids = (
+            _missing_authoritative_offer_ids(
+                commerce,
+                source_id,
+                {str(item.offer_id) for item in linked if item.offer_id},
+            )
+            if bool(getattr(source, "authoritative_snapshot", False))
+            else set()
+        )
+        offers_to_deactivate = (
+            deactivate_offer_ids | retired_domain_offer_ids | authoritative_offer_ids
+        )
         affiliate_program_active = any(status == "active" for status in program_statuses.values())
         journal = _snapshot_mutations(
             commerce,
@@ -254,6 +278,21 @@ def _sync_one_source(
             is_active = not offer.affiliate or (
                 program_id is not None and program_statuses.get(program_id) == "active"
             )
+            offer_metadata = {
+                "source_id": source_id,
+                "match_status": item.decision.status,
+                "match_reason": item.decision.reason,
+                "match_confidence": item.decision.confidence,
+                "affiliate_requires_explicit_activation": bool(offer.affiliate),
+            }
+            if isinstance(source, CoupangPartnerLinksAdapter):
+                offer_metadata.update(
+                    {
+                        "link_only": True,
+                        "stale_redirect_allowed": True,
+                        "manual_affiliate_link": True,
+                    }
+                )
             result_row = commerce.upsert_offer(
                 product_id=str(item.product_id),
                 variant_id=item.variant_id,
@@ -272,13 +311,7 @@ def _sync_one_source(
                 checked_at=offer.observed_at or fetched_at,
                 ttl_seconds=offer.stale_after_seconds,
                 active=is_active,
-                metadata={
-                    "source_id": source_id,
-                    "match_status": item.decision.status,
-                    "match_reason": item.decision.reason,
-                    "match_confidence": item.decision.confidence,
-                    "affiliate_requires_explicit_activation": bool(offer.affiliate),
-                },
+                metadata=offer_metadata,
                 source_payload={
                     "source_id": source_id,
                     "merchant_sku": offer.merchant_sku,
@@ -319,14 +352,22 @@ def _sync_one_source(
         )
     except Exception as exc:
         rollback_error: Exception | None = None
+        fail_closed_error: Exception | None = None
         if journal is not None:
             try:
                 _restore_mutations(commerce, journal)
             except Exception as restore_exc:  # pragma: no cover - catastrophic storage failure
                 rollback_error = restore_exc
+        if bool(getattr(source, "authoritative_snapshot", False)):
+            try:
+                _deactivate_failed_authoritative_source(commerce, source_id)
+            except Exception as deactivate_exc:  # pragma: no cover - catastrophic storage failure
+                fail_closed_error = deactivate_exc
         error = f"{type(exc).__name__}: {exc}"[:1000]
         if rollback_error is not None:
             error = f"{error}; rollback failed: {rollback_error}"[:1000]
+        if fail_closed_error is not None:
+            error = f"{error}; fail-closed deactivation failed: {fail_closed_error}"[:1000]
         _fail_run(
             commerce,
             run_id,
@@ -359,6 +400,7 @@ def _prepare_offers(
     products: list[Product],
     *,
     explicit_product_id: str | None,
+    configured_product_ids: dict[str, str] | None = None,
     identifiers: dict[str, set[str]],
 ) -> list[_PreparedOffer]:
     prepared: list[_PreparedOffer] = []
@@ -382,7 +424,18 @@ def _prepare_offers(
         if offer.observed_at is not None:
             _valid_timestamp(offer.observed_at, "offer observed_at")
 
-        if explicit_product_id is not None:
+        configured_product_id = (configured_product_ids or {}).get(offer.merchant_sku)
+        if configured_product_ids is not None and configured_product_id is None:
+            raise ValueError("Source offer is missing its configured canonical product link")
+        if configured_product_id is not None:
+            decision = MatchDecision(
+                configured_product_id,
+                1.0,
+                "explicit_link",
+                "configured_product_id",
+            )
+            product_id = configured_product_id
+        elif explicit_product_id is not None:
             decision = MatchDecision(explicit_product_id, 1.0, "explicit_link", "explicit_product_id")
             product_id: str | None = explicit_product_id
         else:
@@ -518,6 +571,8 @@ def _affiliate_program_specs(
     commerce: CommerceService,
     source_id: str,
     linked: list[_PreparedOffer],
+    *,
+    source: RetailerSource,
 ) -> dict[str, dict[str, Any]]:
     specs: dict[str, dict[str, Any]] = {}
     with commerce.store.connect() as connection:
@@ -552,7 +607,88 @@ def _affiliate_program_specs(
                 "program_name": f"{item.offer.retailer_name} partner ({source_id})"[:200],
                 "metadata": {},
             }
+    program_name = str(getattr(source, "affiliate_program_name", "")).strip()
+    disclosure_ko = str(getattr(source, "affiliate_disclosure_ko", "")).strip()
+    disclosure_en = str(getattr(source, "affiliate_disclosure_en", "")).strip()
+    for spec in specs.values():
+        if program_name:
+            spec["program_name"] = program_name[:200]
+        if disclosure_ko:
+            spec["disclosure_ko"] = disclosure_ko
+        if disclosure_en:
+            spec["disclosure_en"] = disclosure_en
+        if isinstance(source, CoupangPartnerLinksAdapter):
+            spec["metadata"] = {
+                **dict(spec.get("metadata") or {}),
+                "manual_affiliate_links": True,
+            }
     return specs
+
+
+def _trusted_canonical_product_ids(
+    source: RetailerSource,
+    products: list[Product],
+) -> dict[str, str] | None:
+    if not isinstance(source, CoupangPartnerLinksAdapter):
+        return None
+    mapping = source.canonical_product_ids
+    known_product_ids = {product.id for product in products}
+    unknown = sorted(set(mapping.values()) - known_product_ids)
+    if unknown:
+        preview = ", ".join(unknown[:3])
+        raise ValueError(f"Configured Coupang product_id is not in the catalog: {preview}")
+    return mapping
+
+
+def _missing_authoritative_offer_ids(
+    commerce: CommerceService,
+    source_id: str,
+    current_offer_ids: set[str],
+) -> set[str]:
+    with commerce.store.connect() as connection:
+        rows = connection.execute(
+            "SELECT id FROM offers WHERE source_kind = ?",
+            (f"approved_source:{source_id}",),
+        ).fetchall()
+    return {str(row["id"]) for row in rows} - current_offer_ids
+
+
+def _deactivate_failed_authoritative_source(
+    commerce: CommerceService,
+    source_id: str,
+) -> None:
+    """Keep the last snapshot from remaining public after a failed replacement."""
+
+    now = int(time.time())
+    source_kind = f"approved_source:{source_id}"
+    with commerce.store.connect() as connection:
+        programs = connection.execute(
+            "SELECT id, status, metadata_json FROM affiliate_programs"
+        ).fetchall()
+        program_ids = [
+            str(program["id"])
+            for program in programs
+            if _json_object(program["metadata_json"]).get("source_id") == source_id
+        ]
+        for program in programs:
+            if str(program["id"]) in program_ids and program["status"] == "active":
+                connection.execute(
+                    "UPDATE affiliate_programs SET status = 'pending', updated_at = ? WHERE id = ?",
+                    (now, program["id"]),
+                )
+        connection.execute(
+            "UPDATE offers SET active = 0, updated_at = ? WHERE source_kind = ? AND active = 1",
+            (now, source_kind),
+        )
+        if program_ids:
+            placeholders = ",".join("?" for _ in program_ids)
+            connection.execute(
+                f"""
+                UPDATE offers SET active = 0, updated_at = ?
+                WHERE affiliate_program_id IN ({placeholders}) AND active = 1
+                """,
+                (now, *program_ids),
+            )
 
 
 def _affiliate_offer_ids(

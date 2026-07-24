@@ -1785,6 +1785,14 @@ summary:focus-visible {
   border-radius: 14px;
 }
 
+.affiliate-pre-disclosure {
+  margin: 7px 2px 0;
+  color: #6b7684;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .guardrail-note {
   margin-top: 24px;
   padding: 18px;
@@ -2021,6 +2029,11 @@ summary:focus-visible {
   min-height: 43px;
   margin-top: auto;
   font-size: 13px;
+}
+
+.product-card--compact .affiliate-pre-disclosure {
+  margin-top: 6px;
+  font-size: 10px;
 }
 
 .product-card--compact .save-button {

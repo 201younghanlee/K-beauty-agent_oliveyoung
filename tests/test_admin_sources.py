@@ -11,6 +11,11 @@ class _FakeSource:
     enabled = True
 
 
+class _ManualCoupangSource:
+    source_id = "coupang_partner_links"
+    enabled = True
+
+
 def test_admin_source_routes_require_auth_and_run_only_configured_source(monkeypatch) -> None:
     client = TestClient(web.app)
     source = _FakeSource()
@@ -83,6 +88,50 @@ def test_admin_source_sync_rejects_empty_or_unknown_source(monkeypatch) -> None:
     )
     assert response.status_code == 400
     assert "No enabled source" in response.json()["detail"]
+
+
+def test_admin_reload_invalid_manual_config_deactivates_previous_source(monkeypatch) -> None:
+    client = TestClient(web.app)
+    monkeypatch.setattr(web, "_source_registry", [_ManualCoupangSource(), _FakeSource()])
+    monkeypatch.setattr(web, "_build_agent", lambda: web.agent)
+    monkeypatch.setattr(web.commerce, "sync_legacy_catalog", lambda _products: {})
+    monkeypatch.setattr(
+        web,
+        "configured_sources",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            ValueError("COUPANG_PARTNERS_LINKS_JSON must contain valid JSON")
+        ),
+    )
+    monkeypatch.setattr(
+        web,
+        "active_affiliate_source_ids",
+        lambda: {"coupang_partner_links", "approved_feed"},
+    )
+    reconciliations: list[dict[str, set[str]]] = []
+
+    def reconcile(**kwargs):
+        reconciliations.append(
+            {
+                "configured": set(kwargs["configured_source_ids"]),
+                "approved": set(kwargs["approved_affiliate_source_ids"]),
+            }
+        )
+        return {"programs_changed": 1, "offers_deactivated": 1}
+
+    monkeypatch.setattr(web.commerce, "reconcile_source_activation", reconcile)
+    response = client.post(
+        "/api/admin/reload",
+        headers={"X-Admin-Token": web.admin_token()},
+    )
+
+    assert response.status_code == 400
+    assert "COUPANG_PARTNERS_LINKS_JSON" in response.json()["detail"]
+    assert reconciliations == [
+        {
+            "configured": {"approved_feed"},
+            "approved": {"coupang_partner_links", "approved_feed"},
+        }
+    ]
 
 
 def test_admin_source_candidates_require_auth_and_forward_pagination(monkeypatch) -> None:

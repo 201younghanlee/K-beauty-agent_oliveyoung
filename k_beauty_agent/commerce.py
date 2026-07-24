@@ -45,6 +45,7 @@ DISCLOSURE_KO = "이 링크를 통해 구매가 발생하면 판매처로부터 
 DISCLOSURE_EN = "We may receive a commission when a purchase is made through this link."
 RANKING_POLICY_KO = "추천 점수와 제품 순위에는 제휴 수수료를 사용하지 않습니다."
 RANKING_POLICY_EN = "Affiliate commission is not used in recommendation scores or product ranking."
+MANUAL_COUPANG_LINK_SOURCE_KIND = "approved_source:coupang_partner_links"
 
 
 class RedirectTokenError(ValueError):
@@ -797,12 +798,16 @@ class CommerceService:
         if freshness == "fresh" and price_amount is None:
             price_status = "unknown"
         affiliate_active = row.get("affiliate_status") == "active" and bool(row.get("affiliate_url"))
-        # Legacy catalog rows are link-only retailer destinations. Their old
-        # price and stock data stays hidden, but the allowlisted product/search
-        # page can still be opened so customers can check the current offer at
-        # the retailer. Live feed offers keep the stricter stale-link block.
-        link_only = row["source_kind"] == "legacy_catalog"
-        token = self.create_redirect_token(row["id"], now=now) if freshness != "stale" or link_only else None
+        affiliate_link_allowed = not row.get("affiliate_program_id") or affiliate_active
+        # Explicitly marked link-only rows carry no live price or stock claim.
+        # They may remain navigable after their observation timestamp ages out;
+        # live feed offers keep the stricter stale-link block.
+        link_only = _is_link_only_offer(row)
+        token = (
+            self.create_redirect_token(row["id"], now=now)
+            if affiliate_link_allowed and (freshness != "stale" or _allows_stale_redirect(row))
+            else None
+        )
         return {
             "id": row["id"],
             "variant_id": row["variant_id"],
@@ -921,7 +926,7 @@ class CommerceService:
                 """
                 SELECT
                     o.id, o.destination_url, o.affiliate_url, o.affiliate_program_id,
-                    o.checked_at, o.stale_after, o.source_kind,
+                    o.checked_at, o.stale_after, o.source_kind, o.metadata_json,
                     r.allowed_domains_json, ap.status AS affiliate_status
                 FROM offers o
                 JOIN retailers r ON r.id = o.retailer_id
@@ -932,9 +937,13 @@ class CommerceService:
             ).fetchone()
         if row is None:
             raise RedirectTokenError("Offer is unavailable")
+        if row["affiliate_program_id"] and (
+            row["affiliate_status"] != "active" or not row["affiliate_url"]
+        ):
+            raise RedirectTokenError("Affiliate offer is inactive")
         if (
             _freshness(row["checked_at"], row["stale_after"], now) == "stale"
-            and row["source_kind"] != "legacy_catalog"
+            and not _allows_stale_redirect(row)
         ):
             raise RedirectTokenError("Offer data is stale")
         return row
@@ -1360,6 +1369,22 @@ def _freshness(checked_at: int | None, stale_after: int | None, now: int) -> str
     if checked_at is None or stale_after is None:
         return "unknown"
     return "fresh" if stale_after >= now else "stale"
+
+
+def _is_link_only_offer(row: Any) -> bool:
+    if row["source_kind"] == "legacy_catalog":
+        return True
+    if row["source_kind"] != MANUAL_COUPANG_LINK_SOURCE_KIND:
+        return False
+    return _json_object(row["metadata_json"]).get("link_only") is True
+
+
+def _allows_stale_redirect(row: Any) -> bool:
+    if row["source_kind"] == "legacy_catalog":
+        return True
+    if not _is_link_only_offer(row):
+        return False
+    return _json_object(row["metadata_json"]).get("stale_redirect_allowed") is True
 
 
 def _target_url(row: sqlite3.Row) -> str:

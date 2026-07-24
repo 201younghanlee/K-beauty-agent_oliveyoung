@@ -6,6 +6,7 @@ import re
 from typing import Iterable
 
 from .base import RetailerSource
+from .coupang_partner_links import CoupangPartnerLinksAdapter
 from .coupang_partners import CoupangPartnersAdapter
 from .partner_feed import PartnerFeedAdapter, PartnerFeedConfig
 
@@ -22,13 +23,26 @@ def configured_sources(*, include_disabled: bool = False) -> list[RetailerSource
     coupang = CoupangPartnersAdapter()
     if include_disabled or coupang.enabled:
         sources.append(coupang)
+    manual_coupang = CoupangPartnerLinksAdapter(os.getenv("COUPANG_PARTNERS_LINKS_JSON", ""))
+    if include_disabled or manual_coupang.enabled:
+        sources.append(manual_coupang)
     sources.extend(_partner_sources(os.getenv("PARTNER_FEEDS_JSON", "")))
     return sources
 
 
 def source_status(sources: Iterable[RetailerSource] | None = None) -> list[dict[str, object]]:
     selected = list(sources) if sources is not None else configured_sources(include_disabled=True)
-    return [{"source_id": source.source_id, "enabled": source.enabled} for source in selected]
+    statuses: list[dict[str, object]] = []
+    for source in selected:
+        status: dict[str, object] = {
+            "source_id": source.source_id,
+            "enabled": source.enabled,
+        }
+        details = getattr(source, "status_details", None)
+        if callable(details):
+            status.update(details())
+        statuses.append(status)
+    return statuses
 
 
 def _partner_sources(raw: str) -> list[PartnerFeedAdapter]:

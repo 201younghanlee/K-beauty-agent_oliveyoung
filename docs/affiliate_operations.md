@@ -27,10 +27,14 @@ Suggested review request:
 
 ## Required disclosure
 
-Place a visible `광고·제휴` label and the following Korean sentence next to
-every monetized retailer choice, not only in terms or a footer:
+Place a visible `광고·제휴` label and the applicable Korean disclosure next
+to every monetized retailer choice, not only in terms or a footer. Coupang's
+official guide recommends:
 
-> 이 링크를 통해 구매가 발생하면 판매처로부터 수수료를 받을 수 있어요.
+> 이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.
+
+For other networks, use the wording required by that network while still
+making the economic relationship immediately clear.
 
 The result page should also state:
 
@@ -47,20 +51,30 @@ recommendation:
 ## Partner activation checklist
 
 1. Complete business registration and Apps in Toss business verification.
-2. Join one domestic program first. Coupang Partners is preferred for the first
-   automated integration because it provides product, deep-link, and reporting
-   APIs for websites/apps.
+2. Join one domestic program first. Coupang Partners is preferred because it
+   supports portal-created product links and, after final approval, product,
+   deep-link, and reporting APIs for websites/apps.
 3. Join Olive Young Shopping Curator for approved links, but treat it as a
    link-only source unless Olive Young grants a product feed/API agreement.
 4. Add global feeds only after approval from a network such as Awin or
    Commission Factory. Store the feed's retention, image, and caching terms.
-5. Register API keys in Render/GitHub secrets. Never paste or commit them.
-6. Configure exact feed and retailer-domain allowlists.
-7. Run a sandbox ingestion through the protected admin source API and review unmatched variants and abnormal prices.
-8. Configure the scheduled sync secrets only after the manual sandbox succeeds.
-9. Add the source ID to `ACTIVE_AFFILIATE_SOURCE_IDS` only after the disclosure UI and redirect audit pass.
-10. Import conversions only from a signed callback or approved network report.
-11. Re-check program terms and Apps in Toss approval whenever the redirect,
+5. Before API access is available, generate product links in the Coupang
+   Partners portal and store an exact product mapping in Render:
+   `COUPANG_PARTNERS_LINKS_JSON=[{"product_id":"catalog-product-id","affiliate_url":"https://link.coupang.com/..."}]`.
+   A regular Coupang or share URL is not a monetized replacement.
+6. After Apps in Toss approves the disclosed external-link design, activate
+   portal links with `ACTIVE_AFFILIATE_SOURCE_IDS=coupang_partner_links`.
+7. Register every activity page and a screenshot showing the link plus the
+   disclosure in Coupang Partners. Complete Coupang's final-approval process.
+8. Only after final approval, register API keys in Render secrets. Never paste
+   or commit them.
+9. Configure exact feed and retailer-domain allowlists.
+10. Run a sandbox ingestion through the protected admin source API and review unmatched variants and abnormal prices.
+11. Configure the scheduled sync secrets only after the manual sandbox succeeds.
+12. Add `coupang_partners` to `ACTIVE_AFFILIATE_SOURCE_IDS` only after the API
+    disclosure and redirect audit pass; then remove superseded manual mappings.
+13. Import conversions only from a signed callback or approved network report.
+14. Re-check program terms and Apps in Toss approval whenever the redirect,
     attribution parameters, or destination experience changes.
 
 Official program references:

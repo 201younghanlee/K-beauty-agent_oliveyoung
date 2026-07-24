@@ -53,7 +53,7 @@ from .config import (
 from .commerce import CommerceService, RedirectTokenError, disclosure_metadata
 from .database import ProductDatabase
 from .followup_parser import is_safe_cosmetic_ingredient_text, sanitize_profile_patch
-from .ingestion import sync_retailer_sources
+from .ingestion import SourceIngestionReport, sync_retailer_sources
 from .live_products import LiveProductDatabase
 from .llm import HybridExplainer, ProductReasonExplainer
 from .knowledge_base import canonical_ingredient_key
@@ -64,6 +64,7 @@ from .serializers import product_to_dict, product_to_v2_dict, recommendation_to_
 from .storage import SQLiteStore, SessionWriteLimitError, hash_session
 from .skin import analyze_skin_query
 from .source_adapters import configured_sources, source_status
+from .source_adapters.coupang_partner_links import CoupangPartnerLinksAdapter
 from .video_reviews import YouTubeReviewService
 
 SESSION_COOKIE = "kbeauty_session_id"
@@ -116,6 +117,56 @@ def _close_retailer_sources(sources: list[object]) -> None:
         close = getattr(getattr(source, "client", None), "close", None)
         if callable(close):
             close()
+
+
+def _sync_configured_manual_links(
+    sources: list[object],
+    *,
+    fail_on_error: bool,
+) -> list[SourceIngestionReport]:
+    manual_sources = [
+        source
+        for source in sources
+        if isinstance(source, CoupangPartnerLinksAdapter) and source.enabled
+    ]
+    if not manual_sources:
+        return []
+    reports = list(
+        sync_retailer_sources(
+            commerce,
+            agent.database.products,
+            query="configured-manual-links",
+            sources=manual_sources,
+            active_affiliate_source_ids=active_affiliate_source_ids(),
+        )
+    )
+    failures = [report for report in reports if report.status != "completed"]
+    if failures and fail_on_error:
+        details = "; ".join(
+            f"{report.source_id}: {report.error or 'sync failed'}"
+            for report in failures
+        )
+        raise RuntimeError(f"Configured manual affiliate link sync failed: {details}")
+    return reports
+
+
+def _reconcile_after_invalid_source_config(*, deactivate_all_affiliates: bool) -> None:
+    configured = {
+        source.source_id
+        for source in _source_registry
+        if source.enabled and source.source_id != CoupangPartnerLinksAdapter.source_id
+    }
+    if deactivate_all_affiliates:
+        approved: set[str] = set()
+    else:
+        try:
+            approved = active_affiliate_source_ids()
+        except ValueError:
+            approved = set()
+    commerce.reconcile_source_activation(
+        configured_source_ids=configured,
+        approved_affiliate_source_ids=approved,
+    )
 
 
 @asynccontextmanager
@@ -219,6 +270,7 @@ commerce.reconcile_source_activation(
     approved_affiliate_source_ids=active_affiliate_source_ids(),
 )
 commerce.sync_legacy_catalog(agent.database.products)
+_sync_configured_manual_links(_source_registry, fail_on_error=True)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -940,6 +992,8 @@ def admin_source_sync(
     requested_queries = [payload.query] if payload.query else []
     requested_queries.extend(payload.queries)
     queries = list(dict.fromkeys(query.strip() for query in requested_queries if query and query.strip()))
+    if not queries and payload.source_id == CoupangPartnerLinksAdapter.source_id:
+        queries = ["configured-manual-links"]
     if not queries:
         raise HTTPException(status_code=400, detail="Provide query or at least one non-empty queries item")
     try:
@@ -981,10 +1035,36 @@ def admin_cleanup(_: None = Depends(_require_admin)) -> dict[str, object]:
 
 @app.post("/api/admin/reload")
 def admin_reload(_: None = Depends(_require_admin)) -> dict[str, object]:
-    global agent
+    global agent, _source_registry
     agent = _build_agent()
     commerce.sync_legacy_catalog(agent.database.products)
-    return {"ok": True, "products": len(agent.database.products)}
+    try:
+        refreshed_sources = configured_sources(include_disabled=True)
+    except ValueError as exc:
+        _reconcile_after_invalid_source_config(deactivate_all_affiliates=False)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        approved = active_affiliate_source_ids()
+    except ValueError as exc:
+        _close_retailer_sources(refreshed_sources)
+        _reconcile_after_invalid_source_config(deactivate_all_affiliates=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _close_retailer_sources(list(_source_registry))
+    _source_registry = refreshed_sources
+    reconciliation = commerce.reconcile_source_activation(
+        configured_source_ids={
+            source.source_id for source in _source_registry if source.enabled
+        },
+        approved_affiliate_source_ids=approved,
+    )
+    reports = _sync_configured_manual_links(_source_registry, fail_on_error=True)
+    return {
+        "ok": True,
+        "products": len(agent.database.products),
+        "sources": source_status(_source_registry),
+        "source_reconciliation": reconciliation,
+        "source_reports": [asdict(report) for report in reports],
+    }
 
 
 def _recommend(payload: RecommendRequest, request: Request, response: Response, session_id: str, *, is_follow_up: bool) -> dict[str, object]:
