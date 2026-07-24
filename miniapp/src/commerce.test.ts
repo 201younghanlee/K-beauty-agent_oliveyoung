@@ -53,9 +53,9 @@ describe('affiliate retailer calls to action', () => {
       isAffiliate: false,
     });
 
-    expect(offerCtaLabel(search)).toBe('네이버쇼핑에서 검색');
+    expect(offerCtaLabel(search)).toBe('네이버쇼핑에서 한국어로 검색');
     expect(offerCtaAriaLabel(search)).toBe(
-      '네이버쇼핑 상품명 검색 결과 열기, 토스 외부 이동',
+      '네이버쇼핑 한국어 상품 검색 결과 열기, 토스 외부 이동',
     );
   });
 });

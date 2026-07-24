@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Iterable, Literal
 from urllib.parse import quote_plus, urlparse
 
+from .localization import term
 from .models import Product
 from .source_adapters.security import require_https_url
 
@@ -16,6 +17,7 @@ CatalogLinkKind = Literal[
     "review_reference",
 ]
 RetailerLinkType = Literal["product_page", "retailer_search"]
+HANGUL_PATTERN = re.compile(r"[\uac00-\ud7a3]")
 
 
 @dataclass(frozen=True)
@@ -205,7 +207,7 @@ def retailer_search_links(
         links.append(
             CatalogLink(
                 kind="retailer",
-                label=f"{provider} 상품명 검색",
+                label=f"{provider} 한국어 상품 검색",
                 provider=provider,
                 url=safe_url,
                 source_field="retailer_search",
@@ -230,13 +232,31 @@ def information_links(product: Product) -> list[CatalogLink]:
 
 
 def _retailer_search_query(product: Product) -> str:
-    raw_query = " ".join(
-        part.strip()
-        for part in (product.brand, product.name)
-        if part and part.strip()
-    )
-    without_controls = re.sub(r"[\x00-\x1f\x7f]+", " ", raw_query)
-    return re.sub(r"\s+", " ", without_controls).strip()[:160]
+    localized_name = _clean_search_text(product.display_name_ko)
+    if localized_name and HANGUL_PATTERN.search(localized_name):
+        return localized_name[:160].rstrip()
+
+    brand = _clean_search_text(product.brand)
+    source_name = localized_name or _clean_search_text(product.name)
+    category_ko = _clean_search_text(term(product.category, "ko"))
+    if not HANGUL_PATTERN.search(category_ko):
+        category_ko = "화장품"
+
+    # Put the Korean category first so even products without a translated
+    # catalog name open with a clearly Korean marketplace query. Keep the
+    # original proper name after it because removing it would create broad,
+    # inaccurate matches.
+    parts: list[str] = [category_ko]
+    if brand and (not source_name or brand.casefold() not in source_name.casefold()):
+        parts.append(brand)
+    if source_name:
+        parts.append(source_name)
+    return " ".join(parts).strip()[:160].rstrip()
+
+
+def _clean_search_text(value: str | None) -> str:
+    without_controls = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
+    return re.sub(r"\s+", " ", without_controls).strip()
 
 
 def _safe_https_url(value: str | None) -> str | None:
