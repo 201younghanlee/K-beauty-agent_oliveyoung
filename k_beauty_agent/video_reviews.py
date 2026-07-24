@@ -36,6 +36,7 @@ GENERIC_PRODUCT_TERMS = {
     "advanced",
     "ampoule",
     "barrier",
+    "body",
     "care",
     "clean",
     "cleanser",
@@ -48,6 +49,7 @@ GENERIC_PRODUCT_TERMS = {
     "dark",
     "essence",
     "fit",
+    "foundation",
     "foam",
     "gel",
     "good",
@@ -60,12 +62,15 @@ GENERIC_PRODUCT_TERMS = {
     "moisture",
     "moisturizing",
     "moisturizer",
+    "makeup",
+    "mask",
     "original",
     "power",
     "pure",
     "red",
     "review",
     "serum",
+    "shampoo",
     "skin",
     "skincare",
     "soothing",
@@ -77,6 +82,10 @@ GENERIC_PRODUCT_TERMS = {
     "사용",
     "후기",
     "리뷰",
+    "립밤",
+    "마스크",
+    "메이크업",
+    "바디",
     "로션",
     "보습",
     "세럼",
@@ -90,6 +99,7 @@ GENERIC_PRODUCT_TERMS = {
     "클렌징",
     "클렌저",
     "토너",
+    "헤어",
     "폼",
 }
 REVIEW_INTENT_TERMS = {
@@ -178,6 +188,283 @@ CATEGORY_MATCH_TERMS = {
         "toner",
         "토너",
     },
+    "face_mask": {
+        "claymask",
+        "facemask",
+        "facialmask",
+        "gelmask",
+        "mask",
+        "sheetmask",
+        "sleepingmask",
+        "마스크",
+        "마스크팩",
+        "시트팩",
+    },
+    "eye_care": {
+        "eyecare",
+        "eyecream",
+        "eyemask",
+        "eyepatch",
+        "eyeserum",
+        "eyetreatment",
+        "undereyecream",
+        "아이케어",
+        "아이크림",
+        "아이패치",
+        "아이세럼",
+        "눈가",
+        "눈가케어",
+        "눈가크림",
+    },
+    "lip_care": {
+        "lipbalm",
+        "lipcare",
+        "lipmask",
+        "lipmoisturizer",
+        "liptreatment",
+        "립밤",
+        "립케어",
+        "립마스크",
+    },
+    "exfoliator": {
+        "exfoliator",
+        "exfoliatingtoner",
+        "facescrub",
+        "peel",
+        "scrub",
+        "각질",
+        "스크럽",
+        "필링",
+    },
+    "body_cleanser": {
+        "bathwash",
+        "bodywash",
+        "showergel",
+        "바디워시",
+        "샤워젤",
+    },
+    "body_moisturizer": {
+        "bodycream",
+        "bodylotion",
+        "bodymoisturizer",
+        "bodyoil",
+        "footcream",
+        "handcream",
+        "바디로션",
+        "바디크림",
+        "핸드크림",
+        "풋크림",
+    },
+    "body_exfoliator": {
+        "bodyexfoliator",
+        "bodyscrub",
+        "바디스크럽",
+        "바디각질",
+    },
+    "shampoo": {
+        "shampoo",
+        "샴푸",
+    },
+    "conditioner": {
+        "conditioner",
+        "컨디셔너",
+        "린스",
+    },
+    "hair_treatment": {
+        "hairmask",
+        "hairoil",
+        "hairserum",
+        "hairtreatment",
+        "scalpcare",
+        "트리트먼트",
+        "헤어",
+    },
+    "base_makeup": {
+        "basemakeup",
+        "bbcream",
+        "blush",
+        "bronzer",
+        "cccream",
+        "concealer",
+        "facemakeup",
+        "facepowder",
+        "foundation",
+        "tintedmoisturizer",
+        "베이스메이크업",
+        "블러셔",
+        "컨실러",
+        "쿠션",
+        "파운데이션",
+    },
+    "eye_makeup": {
+        "eyeliner",
+        "eyemakeup",
+        "eyeshadow",
+        "mascara",
+        "아이메이크업",
+        "마스카라",
+        "아이라이너",
+        "아이섀도",
+    },
+    "lip_makeup": {
+        "lipgloss",
+        "lipmakeup",
+        "lipstick",
+        "립글로스",
+        "립메이크업",
+        "립스틱",
+    },
+}
+SCOPED_CATEGORY_MATCH_TERMS = frozenset(
+    {
+        "basemakeup",
+        "bathwash",
+        "bbcream",
+        "bodycream",
+        "bodyexfoliator",
+        "bodylotion",
+        "bodymoisturizer",
+        "bodyoil",
+        "bodyscrub",
+        "bodywash",
+        "cccream",
+        "claymask",
+        "eyecare",
+        "eyecream",
+        "eyeliner",
+        "eyemakeup",
+        "eyemask",
+        "eyepatch",
+        "eyeserum",
+        "eyeshadow",
+        "eyetreatment",
+        "facemakeup",
+        "facemask",
+        "facepowder",
+        "facescrub",
+        "facewash",
+        "facialmask",
+        "footcream",
+        "gelmask",
+        "hairmask",
+        "hairoil",
+        "hairserum",
+        "hairtreatment",
+        "handcream",
+        "lipbalm",
+        "lipcare",
+        "lipgloss",
+        "lipmakeup",
+        "lipmask",
+        "lipmoisturizer",
+        "lipstick",
+        "liptreatment",
+        "scalpcare",
+        "sheetmask",
+        "showergel",
+        "sleepingmask",
+        "suncream",
+        "tintedmoisturizer",
+        "undereyecream",
+        "바디각질",
+        "바디로션",
+        "바디스크럽",
+        "바디워시",
+        "바디크림",
+        "베이스메이크업",
+        "샤워젤",
+        "시트팩",
+        "아이메이크업",
+        "아이세럼",
+        "아이케어",
+        "아이크림",
+        "아이패치",
+        "아이라이너",
+        "아이섀도",
+        "립글로스",
+        "립마스크",
+        "립메이크업",
+        "립스틱",
+        "립케어",
+        "마스크팩",
+        "풋크림",
+        "핸드크림",
+    }
+)
+SCOPED_CATEGORY_TOKEN_GROUPS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "cleanser": (("face", "wash"), ("facial", "wash")),
+    "sunscreen": (("sun", "cream"),),
+    "face_mask": (
+        ("face", "mask"),
+        ("facial", "mask"),
+        ("sheet", "mask"),
+        ("sleeping", "mask"),
+        ("clay", "mask"),
+        ("gel", "mask"),
+    ),
+    "eye_care": (
+        ("eye", "care"),
+        ("eye", "cream"),
+        ("eye", "mask"),
+        ("eye", "patch"),
+        ("eye", "serum"),
+        ("eye", "treatment"),
+        ("under", "eye"),
+    ),
+    "lip_care": (
+        ("lip", "balm"),
+        ("lip", "care"),
+        ("lip", "mask"),
+        ("lip", "moisturizer"),
+        ("lip", "treatment"),
+    ),
+    "exfoliator": (
+        ("face", "scrub"),
+        ("facial", "scrub"),
+        ("exfoliating", "toner"),
+    ),
+    "body_cleanser": (
+        ("bath", "wash"),
+        ("body", "wash"),
+        ("shower", "gel"),
+    ),
+    "body_moisturizer": (
+        ("body", "cream"),
+        ("body", "lotion"),
+        ("body", "moisturizer"),
+        ("body", "oil"),
+        ("foot", "cream"),
+        ("hand", "cream"),
+    ),
+    "body_exfoliator": (
+        ("body", "exfoliator"),
+        ("body", "scrub"),
+    ),
+    "hair_treatment": (
+        ("hair", "mask"),
+        ("hair", "oil"),
+        ("hair", "serum"),
+        ("hair", "treatment"),
+        ("scalp", "care"),
+    ),
+    "base_makeup": (
+        ("base", "makeup"),
+        ("bb", "cream"),
+        ("cc", "cream"),
+        ("face", "makeup"),
+        ("face", "powder"),
+        ("tinted", "moisturizer"),
+    ),
+    "eye_makeup": (
+        ("eye", "liner"),
+        ("eye", "makeup"),
+        ("eye", "shadow"),
+    ),
+    "lip_makeup": (
+        ("lip", "gloss"),
+        ("lip", "makeup"),
+        ("lip", "stick"),
+    ),
 }
 
 
@@ -839,7 +1126,7 @@ def _product_match_profile(product: Product) -> _ProductMatchProfile:
 def _term_present(term: str, tokens: set[str], compact_values: tuple[str, ...]) -> bool:
     if term in tokens:
         return True
-    if re.search(r"[가-힣]", term):
+    if re.search(r"[가-힣]", term) or (term.isascii() and len(term) >= 6):
         return any(term in compact for compact in compact_values)
     return False
 
@@ -881,6 +1168,31 @@ def _has_conflicting_category(
 ) -> bool:
     if not category_terms:
         return False
+    target_category = next(
+        (
+            category
+            for category, terms in CATEGORY_MATCH_TERMS.items()
+            if frozenset(terms) == category_terms
+        ),
+        None,
+    )
+    for category, groups in SCOPED_CATEGORY_TOKEN_GROUPS.items():
+        if category == target_category:
+            continue
+        if any(
+            all(
+                _term_present(term, title_tokens, title_compacts)
+                for term in group
+            )
+            for group in groups
+        ):
+            return True
+    competing_scoped_terms = SCOPED_CATEGORY_MATCH_TERMS.difference(category_terms)
+    if any(
+        _term_present(term, title_tokens, title_compacts)
+        for term in competing_scoped_terms
+    ):
+        return True
     target_present = any(
         _term_present(term, title_tokens, title_compacts)
         for term in category_terms

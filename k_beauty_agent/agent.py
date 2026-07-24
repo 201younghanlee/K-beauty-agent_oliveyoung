@@ -80,30 +80,16 @@ class KBeautyAgent:
             require_complete_ingredients=needs_complete_ingredient_data(profile),
             limit=None,
         )
-        if not candidates:
+        if not candidates and not profile.desired_categories:
             candidates = self.database.search(limit=None)
         scored = self.recommender.score_products(candidates, profile, personalization=personalization)
         top = scored[:limit]
-        broadened = False
-
-        if not top and profile.desired_categories:
-            broad_candidates = self.database.search(
-                search_query,
-                concerns=profile_concerns,
-                ingredients=None,
-                exclude_ingredients=[*profile.avoid_ingredients, *profile.allergies],
-                require_complete_ingredients=needs_complete_ingredient_data(profile),
-                limit=None,
-            )
-            scored = self.recommender.score_products(broad_candidates, profile, personalization=personalization)
-            top = scored[:limit]
-            broadened = bool(top)
 
         if not top:
             profile.follow_up_questions.extend(
                 [
                     "Which cosmetic ingredient names, if any, do you prefer to avoid?",
-                    "Are you looking for cleanser, toner, serum, moisturizer, sunscreen, or a full basic routine?",
+                    "Which product form are you looking for—for example cleanser, toner, serum, moisturizer, sunscreen, face mask, body wash/body lotion/body scrub, shampoo/conditioner/hair treatment, or base makeup/eye makeup/lip makeup?",
                 ]
             )
             return Recommendation(
@@ -125,11 +111,7 @@ class KBeautyAgent:
             query=query,
             profile=profile,
             results=top,
-            fallback_message=(
-                "No safe exact-category match was found after applying ingredient filters, so I broadened the product search."
-                if broadened
-                else None
-            ),
+            fallback_message=None,
             review_summary=summarize_reviews([item.product for item in top]),
             guardrails=DEFAULT_GUARDRAILS,
         )

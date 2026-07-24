@@ -411,6 +411,39 @@ class PersonalizedServiceUnitTest(unittest.TestCase):
         self.assertNotIn('class="score"', app_js)
         self.assertNotIn(".score", (ROOT / "static" / "styles.css").read_text(encoding="utf-8"))
 
+    def test_public_quiz_exposes_expanded_product_forms(self) -> None:
+        index_html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        app_js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+        for value in (
+            "마스크팩",
+            "아이케어",
+            "립케어",
+            "각질 제거",
+            "바디워시",
+            "바디로션",
+            "바디스크럽",
+            "샴푸",
+            "컨디셔너",
+            "트리트먼트",
+            "베이스 메이크업",
+            "아이 메이크업",
+            "립 메이크업",
+        ):
+            self.assertIn(f'name="productType" value="{value}"', index_html)
+        for category in (
+            "body_cleanser",
+            "body_moisturizer",
+            "body_exfoliator",
+            "shampoo",
+            "conditioner",
+            "hair_treatment",
+            "base_makeup",
+            "eye_makeup",
+            "lip_makeup",
+        ):
+            self.assertIn(f"{category}:", app_js)
+
     def test_frontend_localization_and_compare_auto_update_hooks(self) -> None:
         app_js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 

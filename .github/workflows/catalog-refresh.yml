@@ -90,7 +90,7 @@ jobs:
         run: |
           branch="automation/open-beauty-facts-catalog"
           title="data: refresh Open Beauty Facts catalog"
-          body=$'Automated daily refresh of the eligible skincare catalog from the official Open Beauty Facts JSONL export.\n\nThe workflow streamed the dump, applied the catalog safety thresholds, ran the Python suite, and tested, type-checked, and built the Apps in Toss Mini App. This workflow does not merge the pull request automatically.\n\nAttribution: Open Beauty Facts database data is licensed under ODbL 1.0; product images are licensed under CC BY-SA 3.0.'
+          body=$'Automated daily refresh of the eligible beauty catalog from the official Open Beauty Facts JSONL export.\n\nThe workflow streamed the dump, applied the catalog safety thresholds, ran the Python suite, and tested, type-checked, and built the Apps in Toss Mini App. This workflow does not merge the pull request automatically.\n\nAttribution: Open Beauty Facts database data is licensed under ODbL 1.0; product images are licensed under CC BY-SA 3.0.'
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

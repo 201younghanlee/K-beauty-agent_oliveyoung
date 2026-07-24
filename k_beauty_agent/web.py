@@ -306,7 +306,29 @@ class RecommendationProfileRequest(BaseModel):
             "dryness",
         ]
     ] = Field(default_factory=list, max_length=8)
-    desired_categories: list[Literal["cleanser", "toner", "serum", "moisturizer", "sunscreen", "basic"]] = Field(
+    desired_categories: list[
+        Literal[
+            "cleanser",
+            "toner",
+            "serum",
+            "moisturizer",
+            "sunscreen",
+            "face_mask",
+            "eye_care",
+            "lip_care",
+            "exfoliator",
+            "body_cleanser",
+            "body_moisturizer",
+            "body_exfoliator",
+            "shampoo",
+            "conditioner",
+            "hair_treatment",
+            "base_makeup",
+            "eye_makeup",
+            "lip_makeup",
+            "basic",
+        ]
+    ] = Field(
         ..., min_length=1, max_length=6
     )
     avoid_ingredients: list[ProfileText] = Field(default_factory=list, max_length=12)
@@ -1379,5 +1401,17 @@ def _products_for_ids(product_ids: list[str]):
 
 
 def _routine_sort(products):
-    order = {"cleanser": 0, "toner": 1, "serum": 2, "ampoule": 2, "essence": 2, "moisturizer": 3, "sunscreen": 4}
+    order = {
+        "cleanser": 0,
+        "exfoliator": 1,
+        "toner": 2,
+        "serum": 3,
+        "ampoule": 3,
+        "essence": 3,
+        "eye_care": 4,
+        "moisturizer": 5,
+        "face_mask": 6,
+        "lip_care": 7,
+        "sunscreen": 8,
+    }
     return sorted(products, key=lambda product: (order.get(product.category, 20), product.name.lower()))

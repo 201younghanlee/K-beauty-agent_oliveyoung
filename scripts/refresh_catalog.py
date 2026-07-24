@@ -30,6 +30,7 @@ import re
 import statistics
 import sys
 import tempfile
+import unicodedata
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -79,9 +80,200 @@ CATALOG_COLUMNS = (
     "data_attribution_url",
 )
 
-# More specific categories must come first.  For example, "sun cream" is a
-# sunscreen rather than a generic moisturizer.
-CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+# More specific categories must come first. These expanded groups are only
+# accepted when the source name or taxonomy carries an explicit product-form
+# signal. This keeps generic hygiene records out while allowing the catalog to
+# cover the wider beauty assortment users expect.
+SPECIALTY_CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "eye_care",
+        (
+            "eye creams",
+            "eye cream",
+            "eye serums",
+            "eye serum",
+            "eye contour",
+            "eye treatments",
+            "eye treatment",
+            "under eye cream",
+            "under eye treatment",
+            "eye patches",
+            "eye patch",
+            "eye masks",
+            "eye mask",
+        ),
+    ),
+    (
+        "face_mask",
+        (
+            "facial masks",
+            "facial mask",
+            "face masks",
+            "face mask",
+            "sheet masks",
+            "sheet mask",
+            "sleeping masks",
+            "sleeping mask",
+            "clay masks",
+            "clay mask",
+            "gel masks",
+            "gel mask",
+            "masques pour le visage",
+            "masque visage",
+        ),
+    ),
+    (
+        "exfoliator",
+        (
+            "facial scrubs",
+            "facial scrub",
+            "face scrubs",
+            "face scrub",
+            "facial exfoliators",
+            "facial exfoliator",
+            "face exfoliators",
+            "face exfoliator",
+            "chemical peels",
+            "chemical peel",
+            "facial peeling",
+            "exfoliating toner",
+            "gommage visage",
+        ),
+    ),
+    (
+        "lip_care",
+        (
+            "lip balms",
+            "lip balm",
+            "lip care",
+            "lip masks",
+            "lip mask",
+            "lip treatments",
+            "lip treatment",
+            "lip moisturizers",
+            "lip moisturizer",
+            "stick levres",
+            "soin des levres",
+        ),
+    ),
+    (
+        "base_makeup",
+        (
+            "face makeup",
+            "foundations",
+            "foundation",
+            "concealers",
+            "concealer",
+            "bb creams",
+            "bb cream",
+            "cc creams",
+            "cc cream",
+            "tinted moisturizers",
+            "tinted moisturizer",
+            "blushes",
+            "blush",
+            "bronzers",
+            "bronzer",
+            "face powders",
+            "face powder",
+        ),
+    ),
+    (
+        "eye_makeup",
+        (
+            "eyes makeup",
+            "eye makeup",
+            "mascaras",
+            "mascara",
+            "eyeshadows",
+            "eyeshadow",
+            "eye shadow",
+            "eyeliners",
+            "eyeliner",
+            "eye liner",
+        ),
+    ),
+    (
+        "lip_makeup",
+        (
+            "lip cosmetics",
+            "lipsticks",
+            "lipstick",
+            "lip glosses",
+            "lip gloss",
+        ),
+    ),
+    (
+        "shampoo",
+        (
+            "shampoos",
+            "shampoo",
+        ),
+    ),
+    (
+        "conditioner",
+        (
+            "hair conditioners",
+            "hair conditioner",
+            "conditioners",
+            "conditioner",
+        ),
+    ),
+    (
+        "hair_treatment",
+        (
+            "hair masks",
+            "hair mask",
+            "hair serums",
+            "hair serum",
+            "hair oils",
+            "hair oil",
+            "scalp care",
+            "scalp treatments",
+            "scalp treatment",
+        ),
+    ),
+    (
+        "body_exfoliator",
+        (
+            "body scrubs",
+            "body scrub",
+        ),
+    ),
+    (
+        "body_cleanser",
+        (
+            "body washes",
+            "body wash",
+            "shower gels",
+            "shower gel",
+            "gel douche",
+            "duschgel",
+            "bath products",
+            "showers and baths",
+        ),
+    ),
+    (
+        "body_moisturizer",
+        (
+            "body lotions",
+            "body lotion",
+            "body creams",
+            "body cream",
+            "body oils",
+            "body oil",
+            "hand creams",
+            "hand cream",
+            "foot creams",
+            "foot cream",
+        ),
+    ),
+)
+
+# Facial-routine categories retain the stricter explicit face-scope rule used
+# by the original catalog. For example, "sun cream" is a sunscreen rather than
+# a generic moisturizer only when the record is explicitly facial.
+CORE_CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "sunscreen",
         (
@@ -160,6 +352,363 @@ CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "moisturiser",
         ),
     ),
+)
+
+CATEGORY_RULES = (*SPECIALTY_CATEGORY_RULES, *CORE_CATEGORY_RULES)
+REQUIRED_CORE_CATEGORIES = tuple(category for category, _ in CORE_CATEGORY_RULES)
+PUBLIC_RECOMMENDATION_CATEGORIES = tuple(category for category, _ in CATEGORY_RULES)
+LEGACY_CATEGORY_FAMILIES = {
+    "body_care": ("body_cleanser", "body_moisturizer", "body_exfoliator"),
+    "hair_care": ("shampoo", "conditioner", "hair_treatment"),
+    "makeup": ("base_makeup", "eye_makeup", "lip_makeup"),
+}
+LEGACY_CATEGORY_MIGRATION_MAX_DROP_RATIO = 0.60
+MAX_SOURCE_AGE_DAYS = 365 * 3
+FRESHNESS_POLICY_MIGRATION_MAX_DROP_RATIO = 0.85
+
+HARD_EXCLUDED_NAME_SIGNALS = (
+    "after shave",
+    "aftershave",
+    "anti lice",
+    "anti poux",
+    "antifungal",
+    "acne relief",
+    "baby",
+    "babies",
+    "baard",
+    "barba",
+    "barbe",
+    "bart",
+    "bebe",
+    "bébé",
+    "beard",
+    "bougie de massage",
+    "cellulite",
+    "child",
+    "children",
+    "boys",
+    "girls",
+    "madchen",
+    "deodorant",
+    "diaper",
+    "enfant",
+    "enfants",
+    "face & body",
+    "face and body",
+    "visage et corps",
+    "cara y cuerpo",
+    "rostro y cuerpo",
+    "gesicht und korper",
+    "hand sanitizer",
+    "igienizzante mani",
+    "hair root concealer",
+    "root concealer",
+    "hair color",
+    "hair colour",
+    "head lice",
+    "healing ointment",
+    "intimate",
+    "junior",
+    "kid",
+    "kids",
+    "läuse",
+    "lentes",
+    "medicated",
+    "medicinal",
+    "nail",
+    "lash adhesive",
+    "cuticle",
+    "ongle",
+    "ongles",
+    "nagel",
+    "nagelcreme",
+    "nagelpflege",
+    "unghie",
+    "paznokci",
+    "unas",
+    "newborn",
+    "eau de parfum",
+    "parfum spray",
+    "perfume",
+    "pet conditioner",
+    "pet shampoo",
+    "pet wash",
+    "dog conditioner",
+    "dog shampoo",
+    "cat conditioner",
+    "cat shampoo",
+    "for dogs",
+    "for cats",
+    "psoriasis",
+    "pour chiens",
+    "pour chats",
+    "reinigendes handgel",
+    "rasage",
+    "eczema",
+    "shave",
+    "therapeutic shampoo",
+    "tolnaftate",
+    "tattoo",
+    "toilet cleaner",
+    "vaginal",
+    "wash & shampoo",
+    "wash and shampoo",
+)
+
+HARD_EXCLUDED_CATEGORY_SIGNALS = (
+    "anti perspirant",
+    "antiperspirant",
+    "baby care",
+    "desserts",
+    "frozen desserts",
+    "frozen foods",
+    "ice creams",
+    "cat shampoo",
+    "cleaning product",
+    "deodorant",
+    "detergent",
+    "diaper",
+    "disinfectant",
+    "dog shampoo",
+    "eau de toilette",
+    "fragrance",
+    "hair dyes",
+    "hair dye",
+    "household",
+    "intimate hygiene",
+    "medicine",
+    "mouthwash",
+    "nail makeup",
+    "nail polish",
+    "oral care",
+    "pet care",
+    "pet grooming",
+    "pet shampoo",
+    "plant based foods",
+    "shampoos for babies",
+    "shampoos for children",
+    "perfume",
+    "shaving",
+    "toilet cleaner",
+    "toothpaste",
+)
+
+HARD_EXCLUDED_BRAND_SIGNALS = (
+    "babylove",
+    "babyganics",
+    "bebe cadum",
+    "bébé cadum",
+    "dermaclay junior",
+    "mixa bebe",
+    "mixa bébé",
+    "nizoral",
+    "eczema honey",
+    "pet head",
+    "pethead",
+)
+
+HARD_EXCLUDED_INGREDIENT_SIGNALS = (
+    "benzoyl peroxide",
+    "butylphenyl methylpropional",
+    "hicc",
+    "hydroxyisohexyl 3 cyclohexene carboxaldehyde",
+    "chloroacetamide",
+    "isobutyl paraben",
+    "isobutylparaben",
+    "isopropyl paraben",
+    "isopropylparaben",
+    "lilial",
+    "lyral",
+    "pentasodium pentetate",
+    "pyrithione zinc",
+    "selenium sulfide",
+    "tolnaftate",
+    "zinc pyrithion",
+    "zinc pyrithione",
+)
+LEAVE_ON_CATEGORIES = {
+    "base_makeup",
+    "body_moisturizer",
+    "eye_care",
+    "eye_makeup",
+    "face_mask",
+    "hair_treatment",
+    "lip_care",
+    "lip_makeup",
+    "moisturizer",
+    "serum",
+    "sunscreen",
+    "toner",
+}
+LEAVE_ON_PROHIBITED_INGREDIENT_SIGNALS = (
+    "methylchloroisothiazolinone",
+    "methylisothiazolinone",
+)
+
+STRONG_CLEANSER_NAME_SIGNALS = (
+    "cleanser",
+    "cleansing balm",
+    "cleansing foam",
+    "cleansing gel",
+    "cleansing oil",
+    "face wash",
+    "facial wash",
+    "skin cleanser",
+)
+
+STRONG_SUNSCREEN_NAME_SIGNALS = (
+    "face sunscreen",
+    "facial sunscreen",
+    "sun cream",
+    "sun stick",
+    "sunscreen",
+    "solaire",
+    "sonnencreme",
+    "선크림",
+)
+
+CLEANSER_OVERRIDE_BLOCKING_SIGNALS = (
+    "body",
+    "cat",
+    "dog",
+    "foot",
+    "hair",
+    "hand",
+    "pet",
+    "scalp",
+    "shampoo",
+)
+
+KNOWN_SOURCE_CATEGORY_CORRECTIONS = {
+    # Open Beauty Facts currently tags this facial Laneige moisturizer as a
+    # body cream. Keep the correction source-specific and barcode-stable.
+    "8809925136649": "moisturizer",
+    # Community taxonomy corrections verified against the product form.
+    "5037156228144": "hair_treatment",
+    "0694419061358": "body_moisturizer",
+    "7707305543203": "face_mask",
+    "3380810108996": "serum",
+    "8720354199138": "body_cleanser",
+    "4084500380622": "shampoo",
+    "4010355347329": "conditioner",
+    "4015100336764": "conditioner",
+    "7700304143955": "conditioner",
+}
+
+KNOWN_SOURCE_EXCLUDED_BARCODES = {
+    # Community records whose taxonomy points to an unrelated beauty form.
+    "00066656",  # body glitter tagged as shampoo
+    "3574661516332",  # Natusan baby wash tagged as BB cream
+    "7421002044619",  # probable veterinary shampoo with no human-use evidence
+    # Child-directed records whose English display names or primary brand omit
+    # the age restriction carried elsewhere on the label/source record.
+    "4058172703072",
+    "0381371174614",
+    "0860001118643",
+    "3614810004034",
+    "5013692226998",
+    "5013692231541",
+    "8720604317619",
+    "5010525042954",
+    "7613035299726",
+    "8718924879818",
+    # Misclassified shower oil with a product-specific safety concern.
+    "4005808134427",
+    # Explicit face/body or hair/body multi-use products cannot be represented
+    # safely by the catalog's single product-form field.
+    "0190679004789",
+    "3222474495305",
+    "3222474495312",
+    "3245678599235",
+    "3250391896493",
+    "3401360668911",
+    "3468080150157",
+    "3560070211623",
+    "3560070881673",
+    "3574134711332",
+    "3760020733100",
+    "3600523900787",
+    "3607340722127",
+    "4008233129518",
+    "4008233153599",
+    "4058172184765",
+    "5055936817661",
+    "8470003165549",
+    "8710908307188",
+    "8711700956796",
+    "8712561018050",
+    "8712561397650",
+    "8712561397759",
+    "8719134163100",
+    "8720181336041",
+    # Numeric multi-use body cleansers whose source labels explicitly span
+    # body, face, and/or hair despite a single-form taxonomy tag.
+    "0072140810849",
+    "3600523881598",
+    "4058172585692",
+    "4066447576696",
+    "4305615647647",
+    "4305615754635",
+    "4311501677834",
+    "8710447253779",
+    "8710447329207",
+    "8710847952869",
+    "8710847953040",
+    "8710847962301",
+    "8710847962325",
+    "8710908839252",
+    "8711600477650",
+    "8712561397551",
+    "8714100016978",
+    "8714100474990",
+    "8717163648636",
+    "8717163648643",
+    "8717163668863",
+    "8717644521120",
+    "8720181136399",
+    "8720181136405",
+    "8720181607752",
+    # Current product/source pages confirm hidden drug facts or multi-use
+    # scope that is missing from the normalized display row.
+    "0884486453617",
+    "5410306882746",
+    "3760194652948",
+    "3600542298391",
+    "8052862440090",
+    "3256224363316",
+    "0073930568964",
+    "3760354680101",
+    "0056594014169",
+    "5901887016601",
+    "8015700169317",
+}
+
+WEAK_NAME_ONLY_SIGNALS = {
+    "base_makeup": {"blush", "blushes", "bronzer", "bronzers"},
+}
+
+MAKEUP_REMOVER_SIGNALS = (
+    "makeup removers",
+    "makeup remover",
+    "make up removers",
+    "make up remover",
+    "make-up entferner",
+    "make up entferner",
+    "augen make up entferner",
+    "demaquillant",
+    "démaquillant",
+    "micellar water",
+    "cleansing water",
+)
+
+FACE_MASK_CLEANSER_CONFLICTS = (
+    "cleansing foam",
+    "face wash",
+    "facial wash",
+    "foam cleanser",
+    "mud foam",
+    "savon",
+    "soap",
 )
 
 # Product names override noisy community category tags. These signals describe
@@ -347,6 +896,7 @@ PLACEHOLDER_TEXT = {
     "siehe bitte foto",
     "unknown",
     "unknown ingredients",
+    "wird geladen",
 }
 
 
@@ -389,6 +939,11 @@ def _clean_text(value: object) -> str:
 
 def _normalized_search_text(value: object) -> str:
     text = _clean_text(value).lower()
+    text = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(character)
+    )
     text = re.sub(r"\b[a-z]{2,3}:", " ", text)
     text = re.sub(r"[_/\-]+", " ", text)
     return " ".join(text.split())
@@ -415,6 +970,14 @@ def _first_localized_text(record: dict[str, object], base_key: str) -> str:
             if text:
                 return text
     return ""
+
+
+def _valid_product_name(value: str) -> bool:
+    normalized = _normalized_search_text(value)
+    punctuation_stripped = " ".join(re.sub(r"[^\w]+", " ", normalized).split())
+    if normalized in PLACEHOLDER_TEXT or punctuation_stripped in PLACEHOLDER_TEXT:
+        return False
+    return sum(character.isalnum() for character in normalized) >= 2
 
 
 def _longest_localized_text(record: dict[str, object], base_key: str) -> str:
@@ -459,27 +1022,145 @@ def _looks_like_soap_cleanser(record: dict[str, object]) -> bool:
 
 def _category(record: dict[str, object], name: str) -> str | None:
     normalized_name = _normalized_search_text(name)
-    if any(_contains_phrase(normalized_name, signal) for signal in NON_FACIAL_NAME_SIGNALS):
-        return None
-    has_facial_name = any(_contains_phrase(normalized_name, signal) for signal in ("face", "facial"))
-    if not has_facial_name and any(signal in normalized_name for signal in AMBIGUOUS_NON_FACE_FORMS):
-        return None
-    if not has_facial_name and _contains_phrase(normalized_name, "soap"):
-        return None
-
+    normalized_brands = _normalized_search_text(
+        " ".join(
+            [
+                _clean_text(record.get("brands")),
+                *_values(record.get("brands_tags")),
+            ]
+        )
+    )
+    normalized_generic_name = _normalized_search_text(
+        _longest_localized_text(record, "generic_name")
+    )
     category_values: list[str] = []
     for key in ("categories_tags", "categories_hierarchy", "categories"):
         category_values.extend(_values(record.get(key)))
     category_haystack = _normalized_search_text(" ".join(category_values))
-    if any(_contains_phrase(category_haystack, signal) for signal in NON_FACIAL_CATEGORY_SIGNALS):
-        return None
     haystack = _normalized_search_text(" ".join([*category_values, name]))
+    safety_haystack = _normalized_search_text(
+        " ".join([name, normalized_generic_name, *category_values])
+    )
     if not haystack:
         return None
+    if any(_contains_phrase(safety_haystack, signal) for signal in HARD_EXCLUDED_NAME_SIGNALS):
+        return None
+    if any(
+        _contains_phrase(normalized_brands, signal)
+        for signal in HARD_EXCLUDED_BRAND_SIGNALS
+    ):
+        return None
+    normalized_ingredients = _normalized_search_text(
+        _longest_localized_text(record, "ingredients_text")
+    )
+    if any(
+        _contains_phrase(normalized_ingredients, signal)
+        for signal in HARD_EXCLUDED_INGREDIENT_SIGNALS
+    ):
+        return None
+    barcode = _stable_barcode(record.get("code"))
+    if barcode and barcode in KNOWN_SOURCE_EXCLUDED_BARCODES:
+        return None
+    if barcode and barcode in KNOWN_SOURCE_CATEGORY_CORRECTIONS:
+        return KNOWN_SOURCE_CATEGORY_CORRECTIONS[barcode]
+    if any(_contains_phrase(category_haystack, signal) for signal in HARD_EXCLUDED_CATEGORY_SIGNALS):
+        return None
+    name_has_hair_wash = any(
+        _contains_phrase(normalized_name, signal)
+        for signal in ("conditioner", "shampoo", "shampooing", "shampoing")
+    )
+    name_has_body_wash = any(
+        _contains_phrase(normalized_name, signal)
+        for signal in ("bath", "body", "douche", "duschgel", "shower", "shower gel")
+    )
+    if name_has_hair_wash and name_has_body_wash:
+        return None
+
     has_facial_scope = any(_contains_phrase(haystack, signal) for signal in FACIAL_SCOPE_SIGNALS)
+    has_facial_name = any(
+        _contains_phrase(normalized_name, signal) for signal in ("face", "facial")
+    )
+    category_has_body_scope = _contains_phrase(category_haystack, "body")
+    category_has_face_scope = any(
+        _contains_phrase(category_haystack, signal) for signal in ("face", "facial")
+    )
+    # A facial form in the name must not override an explicitly body-scoped
+    # source taxonomy. No single recommendation category can represent both.
+    if has_facial_name and category_has_body_scope and not category_has_face_scope:
+        return None
+
+    # "Makeup remover" is a cleanser, not makeup. Require an explicit facial
+    # signal or a well-known facial cleansing form to avoid household wipes.
+    if any(_contains_phrase(haystack, signal) for signal in MAKEUP_REMOVER_SIGNALS):
+        return "cleanser"
+    if (
+        any(_contains_phrase(normalized_name, signal) for signal in STRONG_CLEANSER_NAME_SIGNALS)
+        and not any(
+            _contains_phrase(normalized_name, signal)
+            for signal in CLEANSER_OVERRIDE_BLOCKING_SIGNALS
+        )
+    ):
+        return "cleanser"
+    if (
+        any(_contains_phrase(normalized_name, signal) for signal in STRONG_SUNSCREEN_NAME_SIGNALS)
+        and not any(
+            _contains_phrase(normalized_name, signal)
+            for signal in ("body", "hair", "hand", "lip", "levres")
+        )
+    ):
+        return "sunscreen"
+
+    # An explicit form in the product name is more reliable than a conflicting
+    # community taxonomy tag. This resolves shampoo-vs-shower-gel and
+    # conditioner-vs-makeup errors without trusting a generic "beauty" label.
+    for category, signals in SPECIALTY_CATEGORY_RULES:
+        weak_signals = WEAK_NAME_ONLY_SIGNALS.get(category, set())
+        if any(
+            _contains_phrase(normalized_name, signal)
+            for signal in signals
+            if signal not in weak_signals
+        ):
+            return category
+    if (
+        _contains_phrase(normalized_name, "serum")
+        and has_facial_scope
+        and not any(
+            _contains_phrase(normalized_name, signal)
+            for signal in ("eye", "eyebrow", "eyelash", "hair", "lash", "lip", "scalp")
+        )
+    ):
+        return "serum"
+
+    category_has_hair_scope = _contains_phrase(category_haystack, "hair")
+    category_has_body_cleanser_scope = any(
+        _contains_phrase(category_haystack, signal)
+        for signal in ("body wash", "shower gel", "showers and baths")
+    )
+    if category_has_face_scope and category_has_body_scope:
+        return None
+    if category_has_hair_scope and category_has_body_cleanser_scope:
+        return None
+
+    for category, signals in SPECIALTY_CATEGORY_RULES:
+        if any(_contains_phrase(category_haystack, signal) for signal in signals):
+            if category == "face_mask" and any(
+                _contains_phrase(normalized_name, signal) for signal in FACE_MASK_CLEANSER_CONFLICTS
+            ):
+                return "cleanser" if has_facial_scope else None
+            return category
+
+    if any(_contains_phrase(normalized_name, signal) for signal in NON_FACIAL_NAME_SIGNALS):
+        return None
+    if not has_facial_name and any(signal in normalized_name for signal in AMBIGUOUS_NON_FACE_FORMS):
+        return None
+    if not has_facial_name and _contains_phrase(normalized_name, "soap"):
+        return None
+    if any(_contains_phrase(category_haystack, signal) for signal in NON_FACIAL_CATEGORY_SIGNALS):
+        return None
+
     if has_facial_scope and _looks_like_soap_cleanser(record):
         return "cleanser"
-    for category, signals in CATEGORY_RULES:
+    for category, signals in CORE_CATEGORY_RULES:
         if any(_contains_phrase(haystack, signal) for signal in signals):
             # Toner is a facial-care form in the beauty catalog even when the
             # contributor omitted an explicit "face" qualifier. Other forms
@@ -501,7 +1182,10 @@ def _category(record: dict[str, object], name: str) -> str | None:
 
 
 def _contains_phrase(text: str, phrase: str) -> bool:
-    return re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", text) is not None
+    normalized_phrase = _normalized_search_text(phrase)
+    if not normalized_phrase:
+        return False
+    return re.search(rf"(?<!\w){re.escape(normalized_phrase)}(?!\w)", text) is not None
 
 
 def _ingredient_text(record: dict[str, object]) -> str:
@@ -606,6 +1290,27 @@ def _source_updated_at(record: dict[str, object]) -> str:
     return ""
 
 
+def _source_record_age_days(source_updated_at: str, *, as_of: str) -> int | None:
+    if not source_updated_at:
+        return None
+    try:
+        updated = dt.datetime.fromisoformat(source_updated_at.replace("Z", "+00:00"))
+        reference = dt.datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=dt.timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=dt.timezone.utc)
+    return max(
+        0,
+        (
+            reference.astimezone(dt.timezone.utc)
+            - updated.astimezone(dt.timezone.utc)
+        ).days,
+    )
+
+
 def _https_url(value: object) -> str:
     url = _clean_text(value)
     if url.startswith("//"):
@@ -662,15 +1367,29 @@ def _normalize_record(
     name = _first_localized_text(record, "product_name")
     if not name:
         return None, "missing_name"
+    if not _valid_product_name(name):
+        return None, "invalid_name"
     brand = _brand(record)
     if not brand:
         return None, "missing_brand"
     category = _category(record, name)
     if category is None:
         return None, "unsupported_category"
+    source_updated_at = _source_updated_at(record)
+    source_age_days = _source_record_age_days(source_updated_at, as_of=fetched_at)
+    if source_age_days is None:
+        return None, "missing_source_updated_at"
+    if source_age_days > MAX_SOURCE_AGE_DAYS:
+        return None, "stale_source_record"
     ingredient_text = _ingredient_text(record)
     if not ingredient_text:
         return None, "missing_ingredients"
+    normalized_ingredient_text = _normalized_search_text(ingredient_text)
+    if category in LEAVE_ON_CATEGORIES and any(
+        _contains_phrase(normalized_ingredient_text, signal)
+        for signal in LEAVE_ON_PROHIBITED_INGREDIENT_SIGNALS
+    ):
+        return None, "prohibited_leave_on_ingredient"
     ingredients = _split_ingredients(ingredient_text)
     if not ingredients:
         return None, "missing_ingredients"
@@ -682,7 +1401,6 @@ def _normalize_record(
         return None, "missing_image"
 
     source_url = f"{PRODUCT_BASE_URL}/{barcode}"
-    source_updated_at = _source_updated_at(record)
     return (
         {
             "id": f"open-beauty-facts-{barcode}",
@@ -819,6 +1537,17 @@ def _read_previous_category_counts(manifest_path: Path) -> dict[str, int]:
     }
 
 
+def _read_previous_max_source_age_days(manifest_path: Path) -> int | None:
+    if not manifest_path.is_file():
+        return None
+    try:
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        age_days = value.get("safety_thresholds", {}).get("max_source_age_days")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+    return age_days if isinstance(age_days, int) and age_days > 0 else None
+
+
 def _validate_threshold(name: str, value: float) -> None:
     if not 0.0 <= value <= 1.0:
         raise CatalogRefreshError(f"{name} must be between 0 and 1")
@@ -859,6 +1588,17 @@ def _record_freshness(rows: list[dict[str, str]], *, as_of: str) -> dict[str, ob
     }
 
 
+def _required_categories_for_validation(
+    previous_category_counts: dict[str, int],
+) -> tuple[str, ...]:
+    has_expanded_history = any(
+        previous_category_counts.get(category, 0)
+        for category in (*LEGACY_CATEGORY_FAMILIES, *PUBLIC_RECOMMENDATION_CATEGORIES)
+        if category not in REQUIRED_CORE_CATEGORIES
+    )
+    return PUBLIC_RECOMMENDATION_CATEGORIES if has_expanded_history else REQUIRED_CORE_CATEGORIES
+
+
 def _validate_catalog(
     *,
     rows: list[dict[str, str]],
@@ -869,10 +1609,17 @@ def _validate_catalog(
     max_drop_ratio: float,
     max_duplicate_ratio: float,
     max_malformed_ratio: float,
+    migration_max_drop_ratio: float | None = None,
 ) -> None:
     _validate_threshold("max_drop_ratio", max_drop_ratio)
     _validate_threshold("max_duplicate_ratio", max_duplicate_ratio)
     _validate_threshold("max_malformed_ratio", max_malformed_ratio)
+    if migration_max_drop_ratio is not None:
+        _validate_threshold("migration_max_drop_ratio", migration_max_drop_ratio)
+    effective_max_drop_ratio = max(
+        max_drop_ratio,
+        migration_max_drop_ratio or 0.0,
+    )
     if min_products < 1:
         raise CatalogRefreshError("min_products must be at least 1")
     if stats.lines_seen == 0:
@@ -892,26 +1639,45 @@ def _validate_catalog(
             f"Malformed JSON ratio {malformed_ratio:.3f} exceeds maximum {max_malformed_ratio:.3f}"
         )
     if previous_count:
-        minimum_from_previous = math.ceil(previous_count * (1.0 - max_drop_ratio))
+        minimum_from_previous = math.ceil(
+            previous_count * (1.0 - effective_max_drop_ratio)
+        )
         if len(rows) < minimum_from_previous:
             drop_ratio = 1.0 - (len(rows) / previous_count)
             raise CatalogRefreshError(
                 f"Catalog dropped from {previous_count} to {len(rows)} products "
-                f"({drop_ratio:.1%}); maximum allowed drop is {max_drop_ratio:.1%}"
+                f"({drop_ratio:.1%}); maximum allowed drop is {effective_max_drop_ratio:.1%}"
             )
 
     current_category_counts = Counter(row["category"] for row in rows)
-    for category, _ in CATEGORY_RULES:
+    for category in _required_categories_for_validation(previous_category_counts):
         current_count = current_category_counts[category]
         if current_count < 1:
             raise CatalogRefreshError(f"Catalog category {category} has no eligible products")
-        previous_category_count = previous_category_counts.get(category, 0)
+    for category, previous_category_count in previous_category_counts.items():
         if previous_category_count:
-            minimum_from_previous = math.ceil(previous_category_count * (1.0 - max_drop_ratio))
+            migrated_categories = LEGACY_CATEGORY_FAMILIES.get(category)
+            current_count = (
+                sum(current_category_counts[value] for value in migrated_categories)
+                if migrated_categories
+                else current_category_counts[category]
+            )
+            allowed_drop_ratio = (
+                LEGACY_CATEGORY_MIGRATION_MAX_DROP_RATIO
+                if migrated_categories
+                else max_drop_ratio
+            )
+            allowed_drop_ratio = max(
+                allowed_drop_ratio,
+                migration_max_drop_ratio or 0.0,
+            )
+            minimum_from_previous = math.ceil(
+                previous_category_count * (1.0 - allowed_drop_ratio)
+            )
             if current_count < minimum_from_previous:
                 raise CatalogRefreshError(
                     f"Catalog category {category} dropped from {previous_category_count} to {current_count}; "
-                    f"maximum allowed drop is {max_drop_ratio:.1%}"
+                    f"maximum allowed drop is {allowed_drop_ratio:.1%}"
                 )
 
 
@@ -1022,6 +1788,12 @@ def refresh_catalog(
     rows = sorted(rows_by_barcode.values(), key=lambda row: row["id"])
     previous_count = _read_previous_count(csv_path, manifest_path)
     previous_category_counts = _read_previous_category_counts(manifest_path)
+    previous_max_source_age_days = _read_previous_max_source_age_days(manifest_path)
+    migration_max_drop_ratio = (
+        FRESHNESS_POLICY_MIGRATION_MAX_DROP_RATIO
+        if previous_count and previous_max_source_age_days != MAX_SOURCE_AGE_DAYS
+        else None
+    )
     _validate_catalog(
         rows=rows,
         stats=stats,
@@ -1031,6 +1803,7 @@ def refresh_catalog(
         max_drop_ratio=max_drop_ratio,
         max_duplicate_ratio=max_duplicate_ratio,
         max_malformed_ratio=max_malformed_ratio,
+        migration_max_drop_ratio=migration_max_drop_ratio,
     )
 
     manifest: dict[str, object] = {
@@ -1059,7 +1832,13 @@ def refresh_catalog(
             "max_drop_ratio": max_drop_ratio,
             "max_duplicate_ratio": max_duplicate_ratio,
             "max_malformed_ratio": max_malformed_ratio,
-            "minimum_products_per_category": 1,
+            "minimum_products_per_required_category": 1,
+            "required_categories": list(
+                _required_categories_for_validation(previous_category_counts)
+            ),
+            "legacy_category_migration_max_drop_ratio": LEGACY_CATEGORY_MIGRATION_MAX_DROP_RATIO,
+            "freshness_policy_migration_max_drop_ratio": FRESHNESS_POLICY_MIGRATION_MAX_DROP_RATIO,
+            "max_source_age_days": MAX_SOURCE_AGE_DAYS,
         },
         "licenses": {
             "database": {
@@ -1086,7 +1865,8 @@ def refresh_catalog(
             "recommendation_tier": "eligible",
             "notice": (
                 "Ingredient lists are community-reported label transcriptions and are not guaranteed complete. "
-                "Verify current packaging; allergy and avoid-ingredient recommendations must exclude these rows."
+                "Only records updated within the configured source-age limit are eligible, but current packaging "
+                "must still be verified; allergy and avoid-ingredient recommendations must exclude these rows."
             ),
         },
         "columns": list(CATALOG_COLUMNS),

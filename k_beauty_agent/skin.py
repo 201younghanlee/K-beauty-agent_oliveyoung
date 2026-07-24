@@ -31,8 +31,38 @@ CATEGORY_TERMS = {
     "serum": ("serum", "ampoule", "essence", "세럼", "앰플", "에센스"),
     "moisturizer": ("lotion", "emulsion", "moisturizer", "water cream", "cream", "수분크림", "수분 크림", "보습크림", "보습 크림", "크림", "에멀전", "로션", "보습제"),
     "sunscreen": ("sunscreen", "spf", "sun cream", "선크림", "자외선"),
+    "face_mask": ("face mask", "facial mask", "sheet mask", "sleeping mask", "clay mask", "gel mask", "마스크팩", "마스크 팩", "시트팩", "시트 팩", "슬리핑팩", "슬리핑 팩"),
+    "eye_care": ("eye care", "eye cream", "eye serum", "eye patch", "eye mask", "under eye", "아이케어", "아이 케어", "아이크림", "아이 크림", "아이세럼", "아이 세럼", "아이패치", "아이 패치", "눈가 케어", "눈가크림"),
+    "lip_care": ("lip balm", "lip care", "lip mask", "lip treatment", "립밤", "립 밤", "립케어", "립 케어", "립마스크", "립 마스크"),
+    "exfoliator": ("exfoliator", "face scrub", "facial scrub", "chemical peel", "exfoliating toner", "각질 제거", "페이스 스크럽", "필링"),
+    "body_cleanser": ("body wash", "shower gel", "bath wash", "바디워시", "바디 워시", "샤워젤", "샤워 젤"),
+    "body_moisturizer": ("body lotion", "body cream", "body oil", "hand cream", "foot cream", "바디로션", "바디 로션", "바디크림", "바디 크림", "바디오일", "바디 오일", "핸드크림", "핸드 크림", "풋크림", "풋 크림"),
+    "body_exfoliator": ("body scrub", "body exfoliator", "바디스크럽", "바디 스크럽", "바디 각질"),
+    "shampoo": ("shampoo", "샴푸"),
+    "conditioner": ("conditioner", "hair conditioner", "컨디셔너", "린스"),
+    "hair_treatment": ("hair treatment", "hair mask", "hair serum", "hair oil", "scalp care", "트리트먼트", "헤어팩", "헤어 팩", "헤어세럼", "헤어 세럼", "헤어오일", "헤어 오일", "두피 케어"),
+    "base_makeup": ("face makeup", "base makeup", "foundation", "concealer", "bb cream", "cc cream", "blush", "bronzer", "face powder", "베이스 메이크업", "파운데이션", "쿠션", "컨실러", "블러셔"),
+    "eye_makeup": ("eye makeup", "mascara", "eyeshadow", "eyeliner", "아이 메이크업", "마스카라", "아이섀도", "아이 섀도", "아이라이너", "아이 라이너"),
+    "lip_makeup": ("lip makeup", "lipstick", "lip gloss", "립 메이크업", "립스틱", "립글로스", "립 글로스"),
     "basic": ("basic", "routine", "기초", "스킨케어", "루틴"),
 }
+
+SPECIALTY_CATEGORY_KEYS = (
+    "face_mask",
+    "eye_care",
+    "lip_care",
+    "exfoliator",
+    "body_cleanser",
+    "body_moisturizer",
+    "body_exfoliator",
+    "shampoo",
+    "conditioner",
+    "hair_treatment",
+    "base_makeup",
+    "eye_makeup",
+    "lip_makeup",
+)
+CORE_PRODUCT_CATEGORY_KEYS = {"cleanser", "toner", "serum", "moisturizer", "sunscreen"}
 
 SENSITIVITY_TERMS = {
     "fragrance_sensitive": ("fragrance", "perfume", "향료", "무향", "향에 민감"),
@@ -274,6 +304,17 @@ def _extract_sensitivity_level(text: str) -> str | None:
 def _category_matches(text: str, category: str, terms: tuple[str, ...]) -> bool:
     if not _contains_any(text, terms):
         return False
+    if category in CORE_PRODUCT_CATEGORY_KEYS:
+        # Avoid treating the generic noun inside a more specific product form
+        # as a second facial category: e.g. lip balm is not a cleansing balm,
+        # eye cream is not a face moisturizer, and hair serum is not a facial
+        # serum. An independently mentioned core form remains detectable.
+        core_text = text
+        for specialty in SPECIALTY_CATEGORY_KEYS:
+            for specialty_term in sorted(CATEGORY_TERMS[specialty], key=len, reverse=True):
+                core_text = core_text.replace(specialty_term.lower(), " ")
+        if not _contains_any(core_text, terms):
+            return False
     if category != "moisturizer":
         return True
 
