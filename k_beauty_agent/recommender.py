@@ -6,6 +6,35 @@ from .models import Product, ProductScore, SkinProfile
 MIN_RECOMMENDATION_SCORE = 3.0
 HARD_EXCLUSION_SCORE = -50.0
 SAFETY_SENSITIVITIES = {"fragrance_sensitive", "gentle_preference"}
+EXPLICIT_CATEGORY_CATALOGS = {
+    "face_mask",
+    "eye_care",
+    "lip_care",
+    "exfoliator",
+    "body_cleanser",
+    "body_moisturizer",
+    "body_exfoliator",
+    "shampoo",
+    "conditioner",
+    "hair_treatment",
+    "base_makeup",
+    "eye_makeup",
+    "lip_makeup",
+}
+SKIN_EVIDENCE_CATEGORIES = {
+    "cleanser",
+    "toner",
+    "serum",
+    "moisturizer",
+    "sunscreen",
+    "face_mask",
+    "eye_care",
+    "lip_care",
+    "exfoliator",
+    "body_cleanser",
+    "body_moisturizer",
+    "body_exfoliator",
+}
 CONCERN_ALIASES = {
     "clogged_pores": {"clogged_pores", "pores"},
     "dullness": {"dullness", "hyperpigmentation"},
@@ -68,11 +97,16 @@ class IngredientHybridRecommender:
         avoid_tokens = {normalize_token(value) for value in profile.avoid_ingredients + profile.allergies}
         product_ingredients = [normalize_token(value) for value in product.ingredients]
         preferred_ingredients = [normalize_token(value) for value in profile.preferred_ingredients]
-        primary_concerns = _concern_aliases(profile.primary_concern)
-        effective_concerns = _effective_concerns(profile)
+        uses_skin_evidence = product.category in SKIN_EVIDENCE_CATEGORIES
+        primary_concerns = _concern_aliases(profile.primary_concern) if uses_skin_evidence else set()
+        effective_concerns = _effective_concerns(profile) if uses_skin_evidence else set()
         sensitivity_is_high = profile.sensitivity_level == "frequent"
         sensitivity_is_present = profile.sensitivity_level in {"frequent", "occasional"}
-        requested_skin_type = profile.skin_type if profile.skin_type not in {None, "unknown"} else None
+        requested_skin_type = (
+            profile.skin_type
+            if uses_skin_evidence and profile.skin_type not in {None, "unknown"}
+            else None
+        )
 
         if product.recommendation_tier not in {"verified", "eligible"}:
             self._add(item, "penalties", -100.0)
@@ -99,7 +133,11 @@ class IngredientHybridRecommender:
                     self._add(item, "category_match", 0.5)
                     item.reasons.append("matches requested category: basic")
             elif normalize_token(product.category) == normalize_token(category):
-                self._add(item, "category_match", 1.0)
+                # Expanded catalog forms do not yet have the same curated
+                # review depth as the maintained facial catalog. An explicit
+                # product-form choice is therefore the primary grounded
+                # signal, while source-quality penalties remain visible.
+                self._add(item, "category_match", 7.0 if category in EXPLICIT_CATEGORY_CATALOGS else 1.0)
                 item.reasons.append(f"matches requested category: {category}")
 
         for avoid in avoid_tokens:
@@ -252,7 +290,7 @@ class IngredientHybridRecommender:
                 item.cautions.append("salicylic acid conflicts with salicylate allergy")
 
         product_concerns = {normalize_token(value).replace(" ", "_") for value in product.concerns}
-        for concern in _ordered_concerns(profile):
+        for concern in _ordered_concerns(profile) if uses_skin_evidence else []:
             aliases = _concern_aliases(concern)
             if aliases & product_concerns:
                 if concern == profile.primary_concern:
@@ -289,7 +327,9 @@ class IngredientHybridRecommender:
             item.missing_data.append("rating/review count")
         elif product.review_count > 0:
             self._add(item, "review_confidence", min(1.0, product.review_count / 2000.0))
-        if not item.evidence and (profile.skin_type or profile.concerns or profile.preferred_ingredients):
+        if uses_skin_evidence and not item.evidence and (
+            profile.skin_type or profile.concerns or profile.preferred_ingredients
+        ):
             self._add(item, "penalties", -1.5)
             item.cautions.append("no recognized evidence-backed ingredient matched the user concern")
 

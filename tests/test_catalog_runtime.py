@@ -16,7 +16,7 @@ from k_beauty_agent.recommender import IngredientHybridRecommender
 from k_beauty_agent.serializers import product_to_dict
 from k_beauty_agent.followup_parser import sanitize_profile_patch
 from k_beauty_agent.skin import analyze_skin_query, canonicalize_ingredient_preferences
-from k_beauty_agent.web import _load_generated_catalog
+from k_beauty_agent.web import RecommendationProfileRequest, _load_generated_catalog
 from scripts.refresh_catalog import CATALOG_COLUMNS
 
 
@@ -228,10 +228,64 @@ def test_budget_price_known_partition_precedes_brand_diversity() -> None:
 def test_basic_category_expands_to_normal_skin_care_steps() -> None:
     serum = _product("basic-serum", tier="verified", ingredient_status="complete", source="curated")
     cleanser = replace(serum, id="basic-cleanser", name="Basic Cleanser", category="cleanser")
+    shampoo = replace(serum, id="basic-hair", name="Repair Shampoo", category="shampoo")
 
-    found = ProductDatabase([serum, cleanser]).search(categories=["basic"], limit=10)
+    found = ProductDatabase([serum, cleanser, shampoo]).search(categories=["basic"], limit=10)
 
     assert {product.id for product in found} == {"basic-serum", "basic-cleanser"}
+
+
+def test_explicit_expanded_category_can_recommend_a_reported_catalog_row() -> None:
+    product = replace(_product("hair-care"), name="Repair Shampoo", category="shampoo")
+    profile = SkinProfile(desired_categories=["shampoo"])
+
+    score = IngredientHybridRecommender().score_product(product, profile)
+
+    assert score.score >= 3.0
+    assert score.score_components["category_match"] == 7.0
+    assert "ingredient data is community-reported" in " ".join(score.cautions)
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        "face_mask",
+        "eye_care",
+        "lip_care",
+        "exfoliator",
+        "body_cleanser",
+        "body_moisturizer",
+        "body_exfoliator",
+        "shampoo",
+        "conditioner",
+        "hair_treatment",
+        "base_makeup",
+        "eye_makeup",
+        "lip_makeup",
+    ],
+)
+def test_public_structured_profile_accepts_expanded_categories(category: str) -> None:
+    profile = RecommendationProfileRequest(skin_type="unknown", desired_categories=[category])
+
+    assert profile.desired_categories == [category]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("lip balm", ["lip_care"]),
+        ("eye cream", ["eye_care"]),
+        ("body lotion", ["body_moisturizer"]),
+        ("hair serum", ["hair_treatment"]),
+        ("exfoliating toner", ["exfoliator"]),
+        ("eye serum and moisturizer", ["moisturizer", "eye_care"]),
+    ],
+)
+def test_specific_beauty_query_does_not_add_an_overlapping_core_category(
+    query: str,
+    expected: list[str],
+) -> None:
+    assert analyze_skin_query(query).desired_categories == expected
 
 
 def test_volatile_alcohol_avoid_does_not_match_fatty_or_benzyl_alcohol() -> None:
@@ -405,6 +459,55 @@ def test_safety_filter_runs_before_candidate_limit() -> None:
     )
 
     assert [item.product.id for item in recommendation.results] == ["verified-safe"]
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        "face_mask",
+        "eye_care",
+        "lip_care",
+        "exfoliator",
+        "body_cleanser",
+        "body_moisturizer",
+        "body_exfoliator",
+        "shampoo",
+        "conditioner",
+        "hair_treatment",
+        "base_makeup",
+        "eye_makeup",
+        "lip_makeup",
+    ],
+)
+def test_frequent_sensitivity_never_broadens_to_an_unrelated_category(
+    category: str,
+) -> None:
+    reported_target = replace(
+        _product(f"reported-{category}"),
+        name=f"Example {category}",
+        category=category,
+    )
+    verified_core = _product(
+        "verified-core",
+        tier="verified",
+        ingredient_status="complete",
+        source="curated",
+    )
+    agent = KBeautyAgent(ProductDatabase([reported_target, verified_core]))
+
+    recommendation = agent.recommend(
+        f"{category} recommendation",
+        structured_profile={
+            "skin_type": "normal",
+            "sensitivity_level": "frequent",
+            "primary_concern": "hydration",
+            "concerns": ["hydration"],
+            "desired_categories": [category],
+        },
+    )
+
+    assert recommendation.decision == "fallback"
+    assert recommendation.results == []
 
 
 def test_runtime_validates_generated_catalog_against_manifest(tmp_path) -> None:

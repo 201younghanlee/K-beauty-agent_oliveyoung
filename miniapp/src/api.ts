@@ -197,9 +197,22 @@ function buildQuery(answers: SurveyAnswers): string {
   const categoryLabels: Record<string, string> = {
     cleanser: '클렌저',
     toner: '토너',
-    serum: '세럼',
+    serum: '세럼·앰플·에센스',
     moisturizer: '수분크림',
     sunscreen: '선크림',
+    face_mask: '마스크팩',
+    eye_care: '아이케어',
+    lip_care: '립케어',
+    exfoliator: '각질케어',
+    body_cleanser: '바디워시',
+    body_moisturizer: '바디 보습',
+    body_exfoliator: '바디 각질 케어',
+    shampoo: '샴푸',
+    conditioner: '컨디셔너',
+    hair_treatment: '헤어 트리트먼트',
+    base_makeup: '베이스 메이크업',
+    eye_makeup: '아이 메이크업',
+    lip_makeup: '립 메이크업',
     basic: '필요한 제품 단계 추천',
   };
   const concernLabels: Record<string, string> = {

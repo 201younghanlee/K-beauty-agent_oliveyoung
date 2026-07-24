@@ -357,6 +357,16 @@ summary:focus-visible {
   line-height: 1.45;
 }
 
+.question-note {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  color: #4e5968;
+  font-size: 13px;
+  line-height: 1.5;
+  background: #f2f4f6;
+  border-radius: 12px;
+}
+
 .chip-group {
   display: flex;
   flex-wrap: wrap;

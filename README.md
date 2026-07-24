@@ -39,10 +39,10 @@ The client uses the SDK `Storage`, `SafeAreaInsets`, and `openURL` APIs. API cal
 
 ## Product capabilities
 
-- Korean and English skin quiz
+- Korean and English beauty quiz with category-specific concern choices
 - Ingredient-, concern-, texture-, and budget-aware ranking
-- Hundreds of recommendation-eligible records across cleanser, toner, serum, moisturizer, and sunscreen categories; exact current counts are exposed by `/api/catalog/status` and `data/catalog_manifest.json`
-- A multi-brand catalog that combines maintained K-beauty records with a quality-filtered Open Beauty Facts facial-skincare snapshot
+- Hundreds of recommendation-eligible records across core skincare, masks, eye and lip care, exfoliation, body care, hair care, and makeup; exact current counts are exposed by `/api/catalog/status` and `data/catalog_manifest.json`
+- A multi-brand catalog that combines maintained K-beauty records with a quality-filtered global Open Beauty Facts snapshot; global records are not presented as Korean origin
 - Daily catalog refresh workflow with validation gates and a reviewable pull request; refreshed data is never auto-merged
 - Follow-up refinement, comparison, saved products, and routine building
 - Multi-retailer offer comparison with price freshness, stock state, and affiliate disclosure
@@ -86,7 +86,7 @@ Affiliate commission is stored only in the commerce layer and is never read by t
 
 ## Catalog refresh
 
-The generated catalog is built from the official Open Beauty Facts daily JSONL export. The refresh job streams the compressed dump, normalizes the five supported skincare categories, deduplicates by barcode, and publishes new files only after minimum-size, per-category drop-rate, duplicate-rate, malformed-data, facial-scope, and ingredient-transcription checks pass.
+The generated catalog is built from the official Open Beauty Facts daily JSONL export. The refresh job streams the compressed dump, normalizes five core skincare categories plus explicit mask, eye, lip, exfoliation, body, hair, and makeup product forms, deduplicates by barcode, and publishes new files only after minimum-size, per-category drop-rate, duplicate-rate, malformed-data, product-scope, and ingredient-transcription checks pass.
 
 ```bash
 python scripts/refresh_catalog.py
@@ -95,7 +95,7 @@ python -m pytest -q
 
 The committed outputs are `data/catalog_generated.csv` and `data/catalog_manifest.json`. The scheduled GitHub Actions workflow runs daily and opens or updates a pull request when the validated snapshot changes. It does not merge automatically, so a data regression can be reviewed before deployment.
 
-Only records with a stable barcode, product name, brand, supported facial category, product image, and plausible reported ingredient list enter the generated recommendation catalog. Community-reported ingredient lists are not treated as complete: these products are excluded for sensitive-skin and avoid-ingredient requests. Allergy, pregnancy, and nursing text is rejected before storage until a separate sensitive-data consent flow exists. The workflow checks the newest dump every day, but an individual community record may still be years old; the manifest and catalog-status API expose that record-freshness distribution. A future Korean regulatory-catalog expansion can use the MFDS functional-cosmetics API after a `MFDS_SERVICE_KEY` is issued; that integration is not enabled yet.
+Only records with a stable barcode, valid product name, brand, an explicitly supported beauty product form, product image, plausible reported ingredient list, and a source-record update within the last three years enter the generated recommendation catalog. The five core skincare categories remain the required safety floor for every refresh, while expanded categories are protected by their own previous-count drop checks after first publication. Community-reported ingredient lists are not treated as complete: these products are excluded for frequent sensitivity and avoid-ingredient requests, and records containing known prohibited legacy ingredients are removed. Allergy, pregnancy, and nursing text is rejected before storage until a separate sensitive-data consent flow exists. A recent Open Beauty Facts edit is not proof that a product is currently sold or that its formula is current; the manifest and catalog-status API expose the source-record freshness distribution, and users are told to verify current packaging. A future Korean regulatory-catalog expansion can use an approved MFDS data source after its access and product fields are verified; that integration is not enabled yet.
 
 ## Local setup
 

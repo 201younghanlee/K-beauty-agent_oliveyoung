@@ -2,7 +2,26 @@ export type SkinType = 'oily' | 'dry' | 'combination' | 'normal' | 'unknown';
 
 export type SensitivityLevel = 'frequent' | 'occasional' | 'low';
 
-export type ProductCategory = 'cleanser' | 'toner' | 'serum' | 'moisturizer' | 'sunscreen' | 'basic';
+export type ProductCategory =
+  | 'cleanser'
+  | 'toner'
+  | 'serum'
+  | 'moisturizer'
+  | 'sunscreen'
+  | 'face_mask'
+  | 'eye_care'
+  | 'lip_care'
+  | 'exfoliator'
+  | 'body_cleanser'
+  | 'body_moisturizer'
+  | 'body_exfoliator'
+  | 'shampoo'
+  | 'conditioner'
+  | 'hair_treatment'
+  | 'base_makeup'
+  | 'eye_makeup'
+  | 'lip_makeup'
+  | 'basic';
 
 export interface SurveyAnswers {
   skinType: SkinType | '';

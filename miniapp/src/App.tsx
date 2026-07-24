@@ -29,6 +29,7 @@ import { hasVerifiedReviewMetrics, sourceUrlIsProductSource } from './provenance
 import { routeAnnouncement, type AppScreen } from './accessibility';
 import type {
   Product,
+  ProductCategory,
   ProductExternalLink,
   ProductVideoReview,
   ProductVideoReviews,
@@ -78,6 +79,19 @@ const CATEGORY_OPTIONS = [
   { value: 'serum', label: '세럼·앰플', icon: '✨' },
   { value: 'moisturizer', label: '로션·크림', icon: '🧴' },
   { value: 'sunscreen', label: '선케어', icon: '☀️' },
+  { value: 'face_mask', label: '마스크팩', icon: '🧖' },
+  { value: 'eye_care', label: '아이케어', icon: '👁️' },
+  { value: 'lip_care', label: '립케어', icon: '👄' },
+  { value: 'exfoliator', label: '각질케어', icon: '🫧' },
+  { value: 'body_cleanser', label: '바디워시', icon: '🛁' },
+  { value: 'body_moisturizer', label: '바디보습', icon: '🧴' },
+  { value: 'body_exfoliator', label: '바디각질', icon: '🫧' },
+  { value: 'shampoo', label: '샴푸', icon: '🧴' },
+  { value: 'conditioner', label: '컨디셔너', icon: '🪮' },
+  { value: 'hair_treatment', label: '헤어팩·케어', icon: '💆' },
+  { value: 'base_makeup', label: '베이스메이크업', icon: '🪞' },
+  { value: 'eye_makeup', label: '아이메이크업', icon: '👁️' },
+  { value: 'lip_makeup', label: '립메이크업', icon: '💄' },
   { value: 'basic', label: '잘 모르겠어요', icon: '🧴' },
 ] as const;
 
@@ -94,6 +108,31 @@ const CONCERN_OPTIONS = [
   { value: 'texture', label: '피부결·거칠음' },
   { value: 'anti_aging', label: '탄력·잔주름' },
 ] as const;
+
+const CATEGORY_CONCERNS: Partial<Record<ProductCategory, ReadonlySet<string>>> = {
+  lip_care: new Set(['hydration', 'dryness', 'barrier_support', 'texture']),
+  body_cleanser: new Set(['acne', 'oil_control', 'dryness', 'barrier_support', 'redness']),
+  body_moisturizer: new Set(['hydration', 'dryness', 'barrier_support', 'redness', 'texture']),
+  body_exfoliator: new Set(['acne', 'clogged_pores', 'dryness', 'texture']),
+};
+
+const CATEGORIES_WITHOUT_SKIN_CONCERNS = new Set<ProductCategory>([
+  'shampoo',
+  'conditioner',
+  'hair_treatment',
+  'base_makeup',
+  'eye_makeup',
+  'lip_makeup',
+]);
+
+function concernOptionsForCategory(category: ProductCategory | '') {
+  const allowed = category ? CATEGORY_CONCERNS[category] : undefined;
+  return allowed ? CONCERN_OPTIONS.filter((option) => allowed.has(option.value)) : CONCERN_OPTIONS;
+}
+
+function categoryUsesSkinConcerns(category: ProductCategory | '') {
+  return !category || !CATEGORIES_WITHOUT_SKIN_CONCERNS.has(category);
+}
 
 const TEXTURE_OPTIONS = [
   { value: 'watery', label: '워터리' },
@@ -1898,7 +1937,11 @@ function App() {
       { missing: !answers.skinType, label: '피부 타입', element: skinQuestionRef.current },
       { missing: !answers.sensitivity, label: '민감도', element: sensitivityQuestionRef.current },
       { missing: !answers.category, label: '찾는 제품', element: categoryQuestionRef.current },
-      { missing: !answers.primaryConcern, label: '1순위 피부 고민', element: primaryConcernRef.current },
+      {
+        missing: categoryUsesSkinConcerns(answers.category) && !answers.primaryConcern,
+        label: '1순위 피부 고민',
+        element: primaryConcernRef.current,
+      },
     ];
     const firstMissing = requiredQuestions.find((question) => question.missing);
     if (firstMissing) {
@@ -2055,7 +2098,12 @@ function App() {
                         key={option.value}
                         className={active ? 'is-selected' : ''}
                         aria-pressed={active}
-                        onClick={() => setAnswers((current) => ({ ...current, category: option.value }))}
+                        onClick={() => setAnswers((current) => ({
+                          ...current,
+                          category: option.value,
+                          primaryConcern: current.category === option.value ? current.primaryConcern : '',
+                          concerns: current.category === option.value ? current.concerns : [],
+                        }))}
                       >
                         <span aria-hidden="true">{option.icon}</span>
                         {option.label}
@@ -2063,8 +2111,14 @@ function App() {
                     );
                   })}
                 </div>
+                {answers.category && !categoryUsesSkinConcerns(answers.category) && (
+                  <p className="question-note">
+                    이 제품 유형은 피부 고민 점수 대신 제품 형태, 민감도, 제외 성분과 데이터 출처를 중심으로 비교해요.
+                  </p>
+                )}
               </section>
 
+              {categoryUsesSkinConcerns(answers.category) && (
               <section className="question-section" ref={primaryConcernRef}>
                 <div className="question-title">
                   <span>4</span>
@@ -2076,7 +2130,7 @@ function App() {
                 <div className="concern-group">
                   <strong>1순위 고민 <span>필수</span></strong>
                   <ChipGroup
-                    options={CONCERN_OPTIONS}
+                    options={concernOptionsForCategory(answers.category)}
                     selected={answers.primaryConcern}
                     labelledBy={PRIMARY_CONCERN_TITLE_ID}
                     describedBy={validation && !answers.primaryConcern ? VALIDATION_MESSAGE_ID : undefined}
@@ -2087,13 +2141,16 @@ function App() {
                 <div className="concern-group concern-group--secondary">
                   <strong>추가 고민 <span>{answers.concerns.length}/2</span></strong>
                   <ChipGroup
-                    options={CONCERN_OPTIONS.filter((option) => option.value !== answers.primaryConcern)}
+                    options={concernOptionsForCategory(answers.category).filter(
+                      (option) => option.value !== answers.primaryConcern,
+                    )}
                     selected={answers.concerns}
                     multiple
                     onSelect={toggleAdditionalConcern}
                   />
                 </div>
               </section>
+              )}
 
               <section className="question-section">
                 <div className="question-title">
@@ -2402,7 +2459,7 @@ function App() {
               <p>피부 반응은 개인마다 달라요. 민감 피부는 소량으로 패치 테스트하고, 가격·재고는 판매처에서 다시 확인해 주세요.</p>
               <details className="data-source-details">
                 <summary>출처와 외부 링크 안내</summary>
-                <p>상품·성분·리뷰 출처는 카드마다 실제 제공처 이름으로 구분해 표시해요. 공개 정보는 오래됐거나 누락될 수 있어요.</p>
+                <p>확장 카탈로그는 최근 3년 안에 수정된 공개 기록만 사용하지만, 수정일은 현재 판매·포뮬러 확인일이 아니에요. 현재 포장은 판매처에서 다시 확인해 주세요.</p>
                 <p>판매처 링크는 정보 제공용이며, <strong>광고·제휴</strong> 표시가 있는 링크를 통한 구매에만 수수료가 발생할 수 있어요.</p>
                 {allResultItems.some((item) => item.product.catalogSource === 'open_beauty_facts') && (
                   <>

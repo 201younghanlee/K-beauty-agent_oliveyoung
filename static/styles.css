@@ -310,6 +310,13 @@ legend {
   gap: 8px;
 }
 
+.choice-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
 .product-type-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

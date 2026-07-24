@@ -3,7 +3,7 @@ import unittest
 
 from k_beauty_agent.agent import KBeautyAgent
 from k_beauty_agent.database import ProductDatabase
-from k_beauty_agent.models import SkinProfile
+from k_beauty_agent.models import Recommendation, SkinProfile
 from k_beauty_agent.recommender import IngredientHybridRecommender
 from k_beauty_agent.skin import analyze_skin_query
 
@@ -38,6 +38,24 @@ class KBeautyAgentTest(unittest.TestCase):
 
         self.assertEqual(recommendation.decision, "ask_more")
         self.assertGreaterEqual(len(recommendation.profile.follow_up_questions), 2)
+
+    def test_fallback_text_surfaces_expanded_product_form_question(self) -> None:
+        question = (
+            "Which product form are you looking for—for example cleanser, toner, serum, moisturizer, "
+            "sunscreen, face mask, "
+            "body wash/body lotion/body scrub, shampoo/conditioner/hair treatment, or base/eye/lip makeup?"
+        )
+        recommendation = Recommendation(
+            decision="fallback",
+            query="recommend something",
+            profile=SkinProfile(follow_up_questions=[question]),
+            fallback_message="No safe match.",
+        )
+
+        text = recommendation.to_text()
+
+        self.assertIn("To refine the search:", text)
+        self.assertIn("body wash/body lotion/body scrub", text)
 
     def test_pregnancy_excludes_retinol(self) -> None:
         db = ProductDatabase.from_json(DB_PATH)

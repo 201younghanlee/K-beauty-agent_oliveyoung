@@ -243,6 +243,11 @@ class Recommendation:
 
         if self.fallback_message:
             lines.append(self.fallback_message)
+        if self.decision == "fallback" and self.profile.follow_up_questions:
+            lines.append("")
+            lines.append("To refine the search:")
+            for question in self.profile.follow_up_questions:
+                lines.append(f"- {question}")
 
         constraints = []
         if self.profile.preferred_ingredients:

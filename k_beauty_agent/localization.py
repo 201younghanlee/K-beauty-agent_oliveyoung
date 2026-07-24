@@ -38,6 +38,19 @@ CATEGORY_KO = {
     "serum": "세럼",
     "moisturizer": "보습제",
     "sunscreen": "선크림",
+    "face_mask": "마스크팩",
+    "eye_care": "아이케어",
+    "lip_care": "립케어",
+    "exfoliator": "각질 케어",
+    "body_cleanser": "바디워시",
+    "body_moisturizer": "바디 보습",
+    "body_exfoliator": "바디 각질 케어",
+    "shampoo": "샴푸",
+    "conditioner": "컨디셔너",
+    "hair_treatment": "헤어 트리트먼트",
+    "base_makeup": "베이스 메이크업",
+    "eye_makeup": "아이 메이크업",
+    "lip_makeup": "립 메이크업",
     "basic": "기초 루틴",
 }
 
@@ -295,6 +308,11 @@ def format_recommendation_text(recommendation: Recommendation, language: Languag
     if recommendation.fallback_message:
         lines.append("현재 DB에서 충분한 근거 성분 매칭을 찾지 못했습니다.")
         lines.append("대안: 향료가 적은 단순 루틴으로 시작하고, 활성 성분은 피부 반응을 확인한 뒤 추가하세요.")
+    if recommendation.decision == "fallback" and recommendation.profile.follow_up_questions:
+        lines.append("")
+        lines.append("조건을 바꿔 다시 찾으려면 다음 정보를 확인해 주세요.")
+        for question in recommendation.profile.follow_up_questions:
+            lines.append(f"- {translate_question(question)}")
 
     constraints = []
     if recommendation.profile.preferred_ingredients:
@@ -362,6 +380,8 @@ def translate_question(question: str) -> str:
         "What is your oil/moisture skin type: oily, dry, combination, normal, or unknown?": "세안 후 피부가 지성, 건성, 복합성, 중성 중 어디에 가깝나요? 잘 모르겠음을 선택해도 됩니다.",
         "What are your top concerns: oil control, acne, hydration, redness, pigmentation, or aging?": "가장 큰 고민은 유분, 여드름, 수분, 붉은기, 잡티, 탄력 중 무엇인가요?",
         "Do you react to fragrance, essential oils, alcohol, acids, or retinoids?": "향료, 에센셜오일, 알코올, 산 성분, 레티노이드에 민감하게 반응하나요?",
+        "Which cosmetic ingredient names, if any, do you prefer to avoid?": "피하고 싶은 화장품 성분명이 있나요?",
+        "Which product form are you looking for—for example cleanser, toner, serum, moisturizer, sunscreen, face mask, body wash/body lotion/body scrub, shampoo/conditioner/hair treatment, or base makeup/eye makeup/lip makeup?": "클렌저, 토너, 세럼, 보습제, 선크림, 마스크팩, 바디워시·바디로션·바디스크럽, 샴푸·컨디셔너·헤어 트리트먼트, 베이스 메이크업·아이 메이크업·립 메이크업 중 어떤 제품을 찾고 있나요?",
     }
     return replacements.get(question, question)
 

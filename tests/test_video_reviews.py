@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import httpx
 from fastapi.testclient import TestClient
+import pytest
 
 from k_beauty_agent import web
 from k_beauty_agent.models import Product
@@ -124,6 +125,80 @@ def test_relevance_filter_rejects_same_family_wrong_category() -> None:
         brand_only_product,
         {"title": "Everything from Embryolisse honest review"},
         {"title": "Everything from Embryolisse honest review"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("category", "product_form", "competing_form"),
+    [
+        ("face_mask", "Repair Mask", "Hair Repair Mask"),
+        ("moisturizer", "Repair Cream", "Eye Repair Cream"),
+        ("moisturizer", "Repair Cream", "Body Repair Cream"),
+        ("exfoliator", "Sugar Scrub", "Body Sugar Scrub"),
+        ("cleanser", "Gentle Wash", "Body Gentle Wash"),
+        ("serum", "Repair Serum", "Eye Repair Serum"),
+    ],
+)
+def test_relevance_filter_prioritizes_scoped_competing_forms(
+    category: str,
+    product_form: str,
+    competing_form: str,
+) -> None:
+    product = Product(
+        id=f"example-{category}",
+        name=f"Example {product_form}",
+        display_name_ko=None,
+        brand="Example",
+        category=category,
+        country="Unknown",
+        ingredients=("Glycerin",),
+    )
+    title = f"Example {competing_form} honest review"
+
+    assert not _is_product_related(
+        product,
+        {"title": title},
+        {"title": title, "description": ""},
+    )
+
+
+@pytest.mark.parametrize(
+    ("category", "form"),
+    [
+        ("eye_care", "Eye Cream"),
+        ("body_moisturizer", "Body Lotion"),
+        ("body_cleanser", "Body Wash"),
+        ("hair_treatment", "Hair Mask"),
+        ("lip_care", "Lip Mask"),
+        ("exfoliator", "Exfoliating Toner"),
+        ("eye_care", "Eye Mask"),
+        ("eye_care", "아이세럼"),
+        ("lip_care", "Lip Moisturizer"),
+        ("base_makeup", "Tinted Moisturizer"),
+        ("body_cleanser", "Bath Wash"),
+        ("body_moisturizer", "풋크림"),
+        ("body_exfoliator", "Body Exfoliator"),
+    ],
+)
+def test_relevance_filter_accepts_multiword_category_forms(
+    category: str,
+    form: str,
+) -> None:
+    product = Product(
+        id=f"example-{category}",
+        name=f"Example Aurora {form}",
+        display_name_ko=None,
+        brand="Example",
+        category=category,
+        country="Unknown",
+        ingredients=("Glycerin",),
+    )
+    title = f"Example Aurora {form} honest review"
+
+    assert _is_product_related(
+        product,
+        {"title": title},
+        {"title": title, "description": ""},
     )
 
 

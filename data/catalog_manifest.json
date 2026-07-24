@@ -6,10 +6,23 @@
   },
   "catalog_source": "open_beauty_facts",
   "category_counts": {
-    "cleanser": 93,
-    "moisturizer": 107,
-    "serum": 4,
-    "sunscreen": 10,
+    "base_makeup": 27,
+    "body_cleanser": 142,
+    "body_exfoliator": 3,
+    "body_moisturizer": 67,
+    "cleanser": 57,
+    "conditioner": 27,
+    "exfoliator": 6,
+    "eye_care": 4,
+    "eye_makeup": 19,
+    "face_mask": 12,
+    "hair_treatment": 7,
+    "lip_care": 24,
+    "lip_makeup": 3,
+    "moisturizer": 23,
+    "serum": 5,
+    "shampoo": 137,
+    "sunscreen": 19,
     "toner": 4
   },
   "columns": [
@@ -39,15 +52,15 @@
     "data_attribution_url"
   ],
   "country_counts": {
-    "Unknown": 218
+    "Unknown": 586
   },
-  "csv_sha256": "ba3d932decccefb906f0e803ce63b9bd8d7439750a9ebbbc343096ae865e8641",
+  "csv_sha256": "c71f20d4e8afa0289b735395140daac49ad85e0e5ec857be2ac08b7b83109229",
   "data_quality": {
     "ingredient_status": "reported",
-    "notice": "Ingredient lists are community-reported label transcriptions and are not guaranteed complete. Verify current packaging; allergy and avoid-ingredient recommendations must exclude these rows.",
+    "notice": "Ingredient lists are community-reported label transcriptions and are not guaranteed complete. Only records updated within the configured source-age limit are eligible, but current packaging must still be verified; allergy and avoid-ingredient recommendations must exclude these rows.",
     "recommendation_tier": "eligible"
   },
-  "generated_at": "2026-07-20T00:17:46Z",
+  "generated_at": "2026-07-24T00:17:49Z",
   "licenses": {
     "database": {
       "id": "ODbL-1.0",
@@ -60,48 +73,74 @@
       "url": "https://creativecommons.org/licenses/by-sa/3.0/"
     }
   },
-  "previous_product_count": 219,
+  "previous_product_count": 218,
   "processing": {
-    "accepted_candidates": 218,
+    "accepted_candidates": 586,
     "duplicate_rows": 0,
-    "lines_seen": 67097,
+    "lines_seen": 67241,
     "malformed_json": 0,
     "non_object_rows": 0,
     "skipped": {
-      "invalid_barcode": 105,
-      "malformed_ingredient_text": 19,
-      "missing_brand": 8946,
-      "missing_image": 289,
-      "missing_ingredients": 279,
-      "missing_name": 22766,
-      "packaging_text_in_ingredients": 1,
-      "too_few_ingredients": 30,
-      "unsupported_category": 34444
+      "invalid_barcode": 106,
+      "invalid_name": 770,
+      "malformed_ingredient_text": 202,
+      "missing_brand": 8316,
+      "missing_image": 1918,
+      "missing_ingredients": 2644,
+      "missing_name": 22850,
+      "packaging_text_in_ingredients": 49,
+      "prohibited_leave_on_ingredient": 11,
+      "stale_source_record": 2358,
+      "too_few_ingredients": 179,
+      "unsupported_category": 27252
     }
   },
-  "product_count": 218,
+  "product_count": 586,
   "record_freshness": {
-    "as_of": "2026-07-20T00:17:46Z",
-    "dated_products": 218,
-    "median_age_days": 1813,
+    "as_of": "2026-07-24T00:17:49Z",
+    "dated_products": 586,
+    "median_age_days": 565,
     "missing_source_updated_at": 0,
-    "newest_source_updated_at": "2025-06-08T11:23:37Z",
-    "older_than_365_days": 218,
-    "older_than_3_years": 157,
-    "older_than_5_years": 97,
-    "oldest_source_updated_at": "2016-02-27T19:24:00Z",
+    "newest_source_updated_at": "2025-06-12T05:30:52Z",
+    "older_than_365_days": 586,
+    "older_than_3_years": 0,
+    "older_than_5_years": 0,
+    "oldest_source_updated_at": "2023-07-30T08:41:26Z",
     "updated_within_365_days": 0
   },
   "safety_thresholds": {
+    "freshness_policy_migration_max_drop_ratio": 0.85,
+    "legacy_category_migration_max_drop_ratio": 0.6,
     "max_drop_ratio": 0.25,
     "max_duplicate_ratio": 0.05,
     "max_malformed_ratio": 0.001,
+    "max_source_age_days": 1095,
     "min_products": 100,
-    "minimum_products_per_category": 1
+    "minimum_products_per_required_category": 1,
+    "required_categories": [
+      "eye_care",
+      "face_mask",
+      "exfoliator",
+      "lip_care",
+      "base_makeup",
+      "eye_makeup",
+      "lip_makeup",
+      "shampoo",
+      "conditioner",
+      "hair_treatment",
+      "body_exfoliator",
+      "body_cleanser",
+      "body_moisturizer",
+      "sunscreen",
+      "cleanser",
+      "toner",
+      "serum",
+      "moisturizer"
+    ]
   },
   "schema_version": 1,
   "source_dump_url": "https://static.openbeautyfacts.org/data/openbeautyfacts-products.jsonl.gz",
-  "source_etag": "\"6a5d692a-548cd69\"",
-  "source_last_modified": "2026-07-20T00:17:46Z",
+  "source_etag": "\"6a62af2d-54b48a1\"",
+  "source_last_modified": "2026-07-24T00:17:49Z",
   "source_mode": "remote_dump"
 }
