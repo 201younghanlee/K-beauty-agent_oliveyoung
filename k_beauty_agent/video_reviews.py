@@ -26,6 +26,7 @@ YOUTUBE_TERMS_URL = "https://www.youtube.com/t/terms"
 GOOGLE_PRIVACY_URL = "https://policies.google.com/privacy"
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 CHANNEL_ID_PATTERN = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
+HANGUL_PATTERN = re.compile(r"[\uac00-\ud7a3]")
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 MAX_YOUTUBE_RESPONSE_BYTES = 1_500_000
 MAX_CACHE_ENTRIES = 512
@@ -547,7 +548,7 @@ class YouTubeReviewService:
             return {
                 **base,
                 "status": "search_only",
-                "message_ko": "현재는 제품명에 맞는 YouTube 후기 검색 결과로 연결해 드려요.",
+                "message_ko": "한국어 후기를 우선한 YouTube 검색 결과로 연결해 드려요.",
                 "videos": [],
             }
 
@@ -618,9 +619,9 @@ class YouTubeReviewService:
                 **base,
                 "status": "ready" if videos else "no_results",
                 "message_ko": (
-                    "제품명과 관련된 공개 YouTube 영상을 찾았어요."
+                    "한국어 후기를 우선해 제품 관련 YouTube 영상을 찾았어요."
                     if videos
-                    else "일치하는 영상을 찾지 못해 YouTube 검색 결과로 연결해 드려요."
+                    else "일치하는 영상을 찾지 못해 한국어 우선 YouTube 검색 결과로 연결해 드려요."
                 ),
                 "videos": videos,
             }
@@ -678,7 +679,8 @@ class YouTubeReviewService:
                 "part": "snippet,status,contentDetails,paidProductPlacementDetails,statistics",
                 "id": ",".join(search_by_id),
                 "fields": (
-                    "items(id,snippet(title,channelId,channelTitle,publishedAt,thumbnails),"
+                    "items(id,snippet(title,channelId,channelTitle,publishedAt,thumbnails,"
+                    "defaultLanguage,defaultAudioLanguage),"
                     "status(privacyStatus,embeddable,madeForKids),contentDetails/duration,"
                     "paidProductPlacementDetails/hasPaidProductPlacement,"
                     "statistics(viewCount,likeCount))"
@@ -754,10 +756,19 @@ class YouTubeReviewService:
             like_count = _non_negative_int(statistics.get("likeCount"))
             if like_count is not None:
                 video["like_count"] = like_count
-            # Preserve the ordering returned by YouTube search. The local
-            # eligibility check only removes clear false positives and never
-            # creates a score or re-ranks API results.
             videos.append(video)
+
+        # YouTube's region and relevance-language hints do not guarantee Korean
+        # results. Prefer videos explicitly marked as Korean, then Hangul titles
+        # and Korean channel names. Python's stable sort preserves YouTube's
+        # relevance order inside each language tier, and English videos remain
+        # available only when there are not enough Korean results.
+        videos.sort(
+            key=lambda video: _korean_video_priority(
+                details_by_id[str(video["video_id"])],
+                video,
+            )
+        )
 
         channel_ids = [
             channel_id
@@ -918,30 +929,35 @@ def _limited_payload(payload: dict[str, object], limit: int) -> dict[str, object
 
 
 def _review_query(product: Product) -> str:
-    # YouTube supports the `|` operator for OR queries. Treat the localized and
-    # English product names as alternatives instead of requiring one result to
-    # match both languages at once.
-    alternatives: list[str] = []
-    seen: set[str] = set()
-    for raw, review_term in (
-        (product.display_name_ko or "", "후기"),
-        (product.name, "review"),
-    ):
-        value = " ".join(str(raw).split())
-        key = value.casefold()
-        if not value or key in seen:
-            continue
-        candidate = f"{value} {review_term}"
-        separator_size = 1 if alternatives else 0
-        remaining = 240 - len("|".join(alternatives)) - separator_size
-        if remaining <= len(review_term) + 1:
-            break
-        alternatives.append(candidate[:remaining].rstrip())
-        seen.add(key)
+    # Keep the discovery query Korean-first. Including an English `review`
+    # alternative caused YouTube to fill the first page with English creators
+    # even when relevanceLanguage and regionCode were set to Korea.
+    raw_name = product.display_name_ko or product.name or product.brand
+    name = " ".join(str(raw_name).split())
+    if not name:
+        name = "K뷰티 제품"
+    return f"{name[:237].rstrip()} 후기".strip()
 
-    if alternatives:
-        return "|".join(alternatives)
-    return f"{' '.join(product.brand.split())[:233]} review".strip()
+
+def _korean_video_priority(
+    source_item: dict[str, Any],
+    public_video: dict[str, object],
+) -> int:
+    snippet = source_item.get("snippet") if isinstance(source_item.get("snippet"), dict) else {}
+    declared_languages = (
+        snippet.get("defaultAudioLanguage"),
+        snippet.get("defaultLanguage"),
+    )
+    if any(
+        isinstance(language, str) and language.casefold().replace("_", "-").startswith("ko")
+        for language in declared_languages
+    ):
+        return 0
+    if HANGUL_PATTERN.search(str(public_video.get("title") or "")):
+        return 1
+    if HANGUL_PATTERN.search(str(public_video.get("channel_title") or "")):
+        return 2
+    return 3
 
 
 def _search_url(query: str) -> str:
