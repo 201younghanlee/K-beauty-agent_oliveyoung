@@ -1575,7 +1575,7 @@ function OfferComparisonDialog({
                 </div>
                 {offer.isAffiliate && (
                   <p className="affiliate-disclosure">
-                    {offer.affiliateDisclosure || '이 링크를 통해 구매하면 판매처로부터 수수료를 받을 수 있어요.'}
+                    {offer.affiliateDisclosure || AFFILIATE_PRE_DISCLOSURE_KO}
                   </p>
                 )}
                 <button

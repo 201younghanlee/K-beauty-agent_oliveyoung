@@ -240,6 +240,7 @@ app/ and agent/     compact reference API retained for portfolio examples
 | `PRODUCT_SOURCE` | `catalog_snapshot`, `curated`, or legacy experimental `live_keyless` data layer | `catalog_snapshot` |
 | `DATABASE_URL` | SQLite storage URL | `/tmp` on free Render |
 | `COUPANG_PARTNERS_LINKS_JSON` | Portal-created Coupang Partners links mapped to exact catalog product IDs for the pre-API launch phase | `[]` |
+| `COUPANG_PARTNERS_LINKS_FILE` | Git-managed JSON file containing approved portal-created product links; takes precedence over the inline JSON value | unset |
 | `COUPANG_PARTNERS_ACCESS_KEY` / `COUPANG_PARTNERS_SECRET_KEY` | Enables the official Coupang Partners API adapter after final approval | unset |
 | `PARTNER_FEEDS_JSON` | Approved normalized feeds and exact feed/destination host allowlists | `[]` |
 | `ACTIVE_AFFILIATE_SOURCE_IDS` | Comma-separated source IDs explicitly approved for activation; use either `coupang_partner_links` for portal links or `coupang_partners` for the API, never both | empty |

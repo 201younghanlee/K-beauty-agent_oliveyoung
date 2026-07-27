@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_PRODUCTS_CSV = BASE_DIR / "data" / "products_verified.csv"
+DEFAULT_OFFICIAL_EXPANSION_JSON = BASE_DIR / "data" / "products_official_expansion.json"
 DEFAULT_REVIEWS_CSV = BASE_DIR / "data" / "review_summaries.csv"
 DEFAULT_GENERATED_CATALOG_CSV = BASE_DIR / "data" / "catalog_generated.csv"
 DEFAULT_CATALOG_MANIFEST = BASE_DIR / "data" / "catalog_manifest.json"

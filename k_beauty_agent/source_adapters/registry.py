@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Iterable
 
+from ..config import BASE_DIR
 from .base import RetailerSource
 from .coupang_partner_links import CoupangPartnerLinksAdapter
 from .coupang_partners import CoupangPartnersAdapter
@@ -23,7 +25,7 @@ def configured_sources(*, include_disabled: bool = False) -> list[RetailerSource
     coupang = CoupangPartnersAdapter()
     if include_disabled or coupang.enabled:
         sources.append(coupang)
-    manual_coupang = CoupangPartnerLinksAdapter(os.getenv("COUPANG_PARTNERS_LINKS_JSON", ""))
+    manual_coupang = CoupangPartnerLinksAdapter(_manual_coupang_config())
     if include_disabled or manual_coupang.enabled:
         sources.append(manual_coupang)
     sources.extend(_partner_sources(os.getenv("PARTNER_FEEDS_JSON", "")))
@@ -43,6 +45,29 @@ def source_status(sources: Iterable[RetailerSource] | None = None) -> list[dict[
             status.update(details())
         statuses.append(status)
     return statuses
+
+
+def _manual_coupang_config() -> str:
+    configured_file = os.getenv("COUPANG_PARTNERS_LINKS_FILE", "").strip()
+    if not configured_file:
+        return os.getenv("COUPANG_PARTNERS_LINKS_JSON", "")
+
+    candidate = Path(configured_file)
+    if not candidate.is_absolute():
+        candidate = BASE_DIR / candidate
+    resolved = candidate.resolve()
+    approved_root = (BASE_DIR / "data").resolve()
+    if approved_root not in resolved.parents or resolved.suffix.lower() != ".json":
+        raise ValueError(
+            "COUPANG_PARTNERS_LINKS_FILE must point to a JSON file inside the application data directory"
+        )
+    try:
+        payload = resolved.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError("COUPANG_PARTNERS_LINKS_FILE could not be read") from exc
+    if len(payload.encode("utf-8")) > 100_000:
+        raise ValueError("COUPANG_PARTNERS_LINKS_FILE exceeds the 100 KB limit")
+    return payload
 
 
 def _partner_sources(raw: str) -> list[PartnerFeedAdapter]:

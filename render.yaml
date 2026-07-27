@@ -61,6 +61,8 @@ services:
         sync: false
       - key: ACTIVE_AFFILIATE_SOURCE_IDS
         sync: false
+      - key: COUPANG_PARTNERS_LINKS_FILE
+        value: data/coupang_partner_links.json
       - key: COUPANG_PARTNERS_LINKS_JSON
         sync: false
       - key: COUPANG_PARTNERS_ACCESS_KEY

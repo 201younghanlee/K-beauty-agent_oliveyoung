@@ -28,6 +28,7 @@ from .config import (
     DEFAULT_JSON_DB,
     DEFAULT_CATALOG_MANIFEST,
     DEFAULT_GENERATED_CATALOG_CSV,
+    DEFAULT_OFFICIAL_EXPANSION_JSON,
     DEFAULT_PRODUCTS_CSV,
     DEFAULT_REVIEWS_CSV,
     admin_token,
@@ -185,6 +186,11 @@ def _build_agent() -> KBeautyAgent:
         fallback = ProductDatabase.from_csv(DEFAULT_PRODUCTS_CSV, DEFAULT_REVIEWS_CSV)
     else:
         fallback = ProductDatabase.from_json(DEFAULT_JSON_DB)
+    if DEFAULT_OFFICIAL_EXPANSION_JSON.exists():
+        fallback = ProductDatabase.combine(
+            fallback,
+            ProductDatabase.from_json(DEFAULT_OFFICIAL_EXPANSION_JSON),
+        )
     source = product_source()
     if source in {"catalog_snapshot", "hybrid_catalog"}:
         try:
