@@ -6,6 +6,16 @@ The source-code license in the repository does not replace the licenses attached
 
 `products_verified.csv` and `review_summaries.csv` contain the maintained, evidence-linked catalog used before the global expansion. Their source and verification URLs remain attached to each record.
 
+`products_official_expansion.json` adds officially identified body, hair, eye,
+lip, mask, exfoliation, and makeup products. These records verify the product
+identity and form against a brand or manufacturer page, but keep
+`ingredient_status=missing` until a complete current-package ingredient source
+is added.
+
+`coupang_partner_links.json` contains operator-created Coupang Partners short
+links mapped only to exact catalog product IDs. The file contains no price or
+stock claim and excludes products for which no Coupang listing was selected.
+
 ## Open Beauty Facts snapshot
 
 `catalog_generated.csv` is a transformed snapshot of the official Open Beauty Facts JSONL export. It covers core facial skincare and explicitly classified mask, eye, lip, exfoliation, body, hair, and makeup forms. `catalog_manifest.json` records the source URL, source timestamp, category counts, processing counts, quality thresholds, output hash, attribution, and applicable licenses.

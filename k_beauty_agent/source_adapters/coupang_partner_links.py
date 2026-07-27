@@ -14,7 +14,7 @@ COUPANG_PARTNER_LINK_SOURCE_ID = "coupang_partner_links"
 COUPANG_PARTNER_LINK_RETAILER_ID = "coupang-partner-links"
 COUPANG_PARTNER_LINK_HOST = "link.coupang.com"
 COUPANG_PARTNERS_DISCLOSURE_KO = (
-    "이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
+    "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
 )
 COUPANG_PARTNERS_DISCLOSURE_EN = (
     "This content is part of Coupang Partners activities, and we may receive a commission."

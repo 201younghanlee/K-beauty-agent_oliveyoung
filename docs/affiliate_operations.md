@@ -61,9 +61,13 @@ recommendation:
 5. Before API access is available, generate product links in the Coupang
    Partners portal and store an exact product mapping in Render:
    `COUPANG_PARTNERS_LINKS_JSON=[{"product_id":"catalog-product-id","affiliate_url":"https://link.coupang.com/..."}]`.
+   For Git-managed approved links, set
+   `COUPANG_PARTNERS_LINKS_FILE=data/coupang_partner_links.json` instead.
    A regular Coupang or share URL is not a monetized replacement.
 6. After Apps in Toss approves the disclosed external-link design, activate
    portal links with `ACTIVE_AFFILIATE_SOURCE_IDS=coupang_partner_links`.
+   Show the required Korean disclosure with every active Coupang offer:
+   `이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.`
 7. Register every activity page and a screenshot showing the link plus the
    disclosure in Coupang Partners. Complete Coupang's final-approval process.
 8. Only after final approval, register API keys in Render secrets. Never paste
