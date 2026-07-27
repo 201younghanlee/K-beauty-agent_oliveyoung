@@ -192,22 +192,31 @@ def retailer_search_links(
     preferred destinations when available.
     """
 
-    query = _retailer_search_query(product)
-    if not query:
-        return []
     excluded = {provider.strip().casefold() for provider in exclude_providers if provider.strip()}
-    encoded_query = quote_plus(query)
     links: list[CatalogLink] = []
     for provider, template in _RETAILER_SEARCHES:
         if provider.casefold() in excluded:
             continue
+        search_language = "en" if provider == "YesStyle" else "ko"
+        query = (
+            _international_retailer_search_query(product)
+            if search_language == "en"
+            else _retailer_search_query(product)
+        )
+        if not query:
+            continue
+        encoded_query = quote_plus(query)
         safe_url = _safe_https_url(template.format(query=encoded_query))
         if not safe_url:
             continue
         links.append(
             CatalogLink(
                 kind="retailer",
-                label=f"{provider} 한국어 상품 검색",
+                label=(
+                    f"{provider} 영문 상품 검색"
+                    if search_language == "en"
+                    else f"{provider} 한국어 상품 검색"
+                ),
                 provider=provider,
                 url=safe_url,
                 source_field="retailer_search",
@@ -251,6 +260,25 @@ def _retailer_search_query(product: Product) -> str:
         parts.append(brand)
     if source_name:
         parts.append(source_name)
+    return " ".join(parts).strip()[:160].rstrip()
+
+
+def _international_retailer_search_query(product: Product) -> str:
+    """Build a non-localized query for global retailer search pages."""
+
+    brand = _clean_search_text(product.brand)
+    source_name = _clean_search_text(product.name)
+    if source_name and not HANGUL_PATTERN.search(source_name):
+        parts = []
+        if brand and brand.casefold() not in source_name.casefold():
+            parts.append(brand)
+        parts.append(source_name)
+        return " ".join(parts).strip()[:160].rstrip()
+
+    # If the catalog only has a Korean product name, avoid sending that text to
+    # an English-only storefront. A brand plus the normalized category remains
+    # broad, but is more useful than a query the retailer cannot interpret.
+    parts = [part for part in (brand, _clean_search_text(term(product.category, "en"))) if part]
     return " ".join(parts).strip()[:160].rstrip()
 
 

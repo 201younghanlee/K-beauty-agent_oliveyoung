@@ -3,6 +3,7 @@ import {
   AFFILIATE_PRE_DISCLOSURE_KO,
   offerCtaAriaLabel,
   offerCtaLabel,
+  offerSearchLanguageLabel,
 } from './commerce';
 import type { RetailOffer } from './types';
 
@@ -58,6 +59,20 @@ describe('affiliate retailer calls to action', () => {
     expect(offerCtaLabel(search)).toBe('네이버쇼핑에서 한국어로 검색');
     expect(offerCtaAriaLabel(search)).toBe(
       '네이버쇼핑 한국어 상품 검색 결과 열기, 토스 외부 이동',
+    );
+  });
+
+  it('labels YesStyle as an English-language retailer search', () => {
+    const search = offer({
+      retailerName: 'YesStyle',
+      linkType: 'retailer_search',
+      isAffiliate: false,
+    });
+
+    expect(offerSearchLanguageLabel(search)).toBe('영문');
+    expect(offerCtaLabel(search)).toBe('YesStyle에서 영문으로 검색');
+    expect(offerCtaAriaLabel(search)).toBe(
+      'YesStyle 영문 상품 검색 결과 열기, 토스 외부 이동',
     );
   });
 });

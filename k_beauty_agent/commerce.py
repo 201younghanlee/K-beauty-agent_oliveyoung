@@ -1414,7 +1414,7 @@ def _is_retailer_search_offer(row: Any) -> bool:
 def _prefer_specific_retailer_offers(rows: Iterable[Any]) -> list[Any]:
     row_list = list(rows)
     retailers_with_specific_links = {
-        row["retailer_id"]
+        _retailer_family_key(row)
         for row in row_list
         if not _is_retailer_search_offer(row)
     }
@@ -1422,8 +1422,19 @@ def _prefer_specific_retailer_offers(rows: Iterable[Any]) -> list[Any]:
         row
         for row in row_list
         if not _is_retailer_search_offer(row)
-        or row["retailer_id"] not in retailers_with_specific_links
+        or _retailer_family_key(row) not in retailers_with_specific_links
     ]
+
+
+def _retailer_family_key(row: Any) -> str:
+    """Group search fallbacks with specific links for the same storefront."""
+
+    retailer_name = str(row["retailer_name"]).strip().casefold()
+    aliases = {
+        "coupang": "coupang",
+        "쿠팡": "coupang",
+    }
+    return aliases.get(retailer_name, str(row["retailer_id"]).strip().casefold())
 
 
 def _allows_stale_redirect(row: Any) -> bool:
