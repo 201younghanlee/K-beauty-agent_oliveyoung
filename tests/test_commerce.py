@@ -234,6 +234,47 @@ def test_specific_retailer_offer_replaces_same_retailer_search_fallback(
     assert coupang_offers[0]["price"]["amount"] == 18_000
 
 
+def test_coupang_partner_link_replaces_generic_coupang_search_fallback(
+    tmp_path: Path,
+) -> None:
+    product = replace(_product(), purchase_url=None, retailer_name=None)
+    store = SQLiteStore(tmp_path / "coupang-partner-specific.sqlite3")
+    service = CommerceService(
+        store,
+        "commerce-test-signing-secret",
+        include_retailer_searches=True,
+    )
+    service.sync_legacy_catalog([product])
+    service.upsert_retailer(
+        retailer_id="coupang-partner-links",
+        display_name="쿠팡",
+        base_url="https://link.coupang.com",
+        allowed_domains=("link.coupang.com",),
+    )
+    service.upsert_offer(
+        product_id=product.id,
+        retailer_id="coupang-partner-links",
+        destination_url="https://link.coupang.com/a/test-product",
+        source_kind="manual_coupang_partner_link",
+        offer_id="coupang-partner-specific",
+        stock_status="unknown",
+    )
+
+    bundle = service.offers_for_product(product.id)
+    coupang_offers = [
+        offer
+        for offer in bundle["offers"]
+        if offer["retailer"]["name"].casefold() == "coupang"
+        or offer["retailer"]["name"] == "쿠팡"
+    ]
+
+    assert bundle["summary"]["offer_count"] == 4
+    assert bundle["summary"]["retailer_count"] == 4
+    assert len(coupang_offers) == 1
+    assert coupang_offers[0]["id"] == "coupang-partner-specific"
+    assert coupang_offers[0]["link_type"] == "product_page"
+
+
 def test_open_beauty_facts_gtin_is_seeded_for_first_retailer_match(tmp_path: Path) -> None:
     obf_product = replace(
         _product(),

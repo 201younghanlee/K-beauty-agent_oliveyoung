@@ -114,7 +114,13 @@ def test_retailer_search_links_expand_discovery_without_claiming_an_exact_listin
     for link in links:
         params = parse_qs(urlparse(link.url).query)
         queries.append(next(params[key][0] for key in ("query", "q", "keyword") if key in params))
-    assert queries == ["에뛰드 순정 2x 베리어 인텐시브 크림"] * 4
+    assert queries == [
+        "에뛰드 순정 2x 베리어 인텐시브 크림",
+        "에뛰드 순정 2x 베리어 인텐시브 크림",
+        "에뛰드 순정 2x 베리어 인텐시브 크림",
+        "ETUDE SoonJung 2x Barrier Intensive Cream",
+    ]
+    assert links[-1].label == "YesStyle 영문 상품 검색"
 
 
 def test_retailer_search_uses_korean_category_when_localized_name_is_missing() -> None:
@@ -130,8 +136,17 @@ def test_retailer_search_uses_korean_category_when_localized_name_is_missing() -
         params = parse_qs(urlparse(link.url).query)
         queries.append(next(params[key][0] for key in ("query", "q", "keyword") if key in params))
 
-    assert queries == ["보습제 ETUDE SoonJung 2x Barrier Intensive Cream"] * 4
-    assert all(any("가" <= character <= "힣" for character in query) for query in queries)
+    assert queries == [
+        "보습제 ETUDE SoonJung 2x Barrier Intensive Cream",
+        "보습제 ETUDE SoonJung 2x Barrier Intensive Cream",
+        "보습제 ETUDE SoonJung 2x Barrier Intensive Cream",
+        "ETUDE SoonJung 2x Barrier Intensive Cream",
+    ]
+    assert all(
+        any("가" <= character <= "힣" for character in query)
+        for query in queries[:3]
+    )
+    assert not any("가" <= character <= "힣" for character in queries[-1])
 
 
 def test_untranslated_retailer_search_starts_with_korean_product_type() -> None:

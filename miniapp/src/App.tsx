@@ -22,6 +22,7 @@ import {
   AFFILIATE_PRE_DISCLOSURE_KO,
   offerCtaAriaLabel,
   offerCtaLabel,
+  offerSearchLanguageLabel,
 } from './commerce';
 import { openExternalUrl } from './external';
 import { deleteUserData } from './privacy';
@@ -1557,11 +1558,13 @@ function OfferComparisonDialog({
                   {offer.isLinkOnly ? (
                     <>
                       <span className="availability availability--unknown">
-                        {offer.linkType === 'retailer_search' ? '한국어 상품 검색' : '판매처에서 확인'}
+                        {offer.linkType === 'retailer_search'
+                          ? `${offerSearchLanguageLabel(offer)} 상품 검색`
+                          : '판매처에서 확인'}
                       </span>
                       <span>
                         {offer.linkType === 'retailer_search'
-                          ? '한국어 검색 결과에서 정확한 상품인지와 실제 판매 여부·가격·재고를 확인해 주세요.'
+                          ? `${offerSearchLanguageLabel(offer)} 검색 결과에서 정확한 상품인지와 실제 판매 여부·가격·재고를 확인해 주세요.`
                           : '가격·재고는 판매처의 최신 정보를 확인해 주세요.'}
                       </span>
                     </>

@@ -121,9 +121,12 @@ const uiText = {
     affiliateDisclosure: "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.",
     goToRetailer: "판매처에서 확인",
     searchAtRetailer: "{retailer}에서 한국어로 검색",
+    searchAtRetailerEnglish: "{retailer}에서 영문으로 검색",
     retailerSearchBadge: "한국어 상품 검색",
+    retailerSearchBadgeEnglish: "영문 상품 검색",
     retailerSearchPrice: "검색 결과에서 가격 확인",
     retailerSearchNote: "한국어 검색 결과에서 정확한 상품인지와 실제 판매 여부·가격·재고를 확인해 주세요.",
+    retailerSearchNoteEnglish: "영문 검색 결과에서 정확한 상품인지와 실제 판매 여부·가격·재고를 확인해 주세요.",
     noTrackedLink: "안전한 구매 링크 미제공",
     listPrice: "정가 {price}",
     offerSummaryUnknown: "판매처에서 현재 가격과 재고를 다시 확인해 주세요.",
@@ -223,9 +226,12 @@ const uiText = {
     affiliateDisclosure: "We may earn a commission when you purchase through some retailer links. Affiliate status and commission do not affect recommendation ranking.",
     goToRetailer: "Check at retailer",
     searchAtRetailer: "Search at {retailer}",
+    searchAtRetailerEnglish: "Search at {retailer}",
     retailerSearchBadge: "Product search",
+    retailerSearchBadgeEnglish: "English product search",
     retailerSearchPrice: "Check price in search results",
     retailerSearchNote: "Confirm the exact product, availability, price, and stock in the search results.",
+    retailerSearchNoteEnglish: "Confirm the exact product, availability, price, and stock in the English search results.",
     noTrackedLink: "Secure purchase link unavailable",
     listPrice: "List {price}",
     offerSummaryUnknown: "Confirm the current price and stock with the retailer.",
@@ -1936,6 +1942,7 @@ function renderOfferModal(product, statusMessage = "") {
 
 function renderOfferRow(offer) {
   const isRetailerSearch = offer.linkType === "retailer_search";
+  const isEnglishRetailerSearch = isRetailerSearch && offer.retailerName.trim().toLowerCase() === "yesstyle";
   const priceText = isRetailerSearch
     ? text("retailerSearchPrice")
     : offer.priceAmount !== null
@@ -1943,7 +1950,7 @@ function renderOfferRow(offer) {
       : text("needPrice");
   const showListPrice = offer.listPriceAmount !== null && offer.priceAmount !== null && offer.listPriceAmount > offer.priceAmount;
   const outboundLabel = isRetailerSearch
-    ? text("searchAtRetailer").replace("{retailer}", offer.retailerName)
+    ? text(isEnglishRetailerSearch ? "searchAtRetailerEnglish" : "searchAtRetailer").replace("{retailer}", offer.retailerName)
     : text("goToRetailer");
   const clickControl = offer.clickUrl
     ? `<a class="primary offer-outbound" href="${escapeHtml(offer.clickUrl)}" target="_blank" rel="nofollow sponsored noreferrer">${escapeHtml(outboundLabel)}<i data-lucide="external-link"></i></a>`
@@ -1957,7 +1964,7 @@ function renderOfferRow(offer) {
         </div>
         <div class="offer-badges">
           ${isRetailerSearch
-            ? `<span class="availability-badge unknown">${text("retailerSearchBadge")}</span>`
+            ? `<span class="availability-badge unknown">${text(isEnglishRetailerSearch ? "retailerSearchBadgeEnglish" : "retailerSearchBadge")}</span>`
             : `<span class="availability-badge ${offer.availability}">${availabilityLabel(offer.availability)}</span>
                <span class="freshness-badge ${offer.freshness}">${freshnessLabel(offer.freshness)}</span>`}
         </div>
@@ -1966,7 +1973,7 @@ function renderOfferRow(offer) {
         <strong>${priceText}</strong>
         ${showListPrice ? `<span>${text("listPrice").replace("{price}", money(offer.listPriceAmount, offer.currency))}</span>` : ""}
         <small>${escapeHtml(isRetailerSearch
-          ? text("retailerSearchNote")
+          ? text(isEnglishRetailerSearch ? "retailerSearchNoteEnglish" : "retailerSearchNote")
           : offer.checkedAt
             ? text("checkedAt").replace("{date}", formatOfferCheckedAt(offer.checkedAt))
             : text("unknownFreshness"))}</small>
