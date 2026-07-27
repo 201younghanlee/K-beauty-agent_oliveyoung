@@ -18,6 +18,7 @@ import {
   requestRecommendations,
   termsOfUseUrl,
 } from './api';
+import { createSearchInterstitialController } from './ads';
 import {
   AFFILIATE_PRE_DISCLOSURE_KO,
   offerCtaAriaLabel,
@@ -1619,7 +1620,7 @@ function LoadingPanel() {
         <span />
       </div>
       <h2>딱 맞는 제품을 찾고 있어요</h2>
-      <p>여러 상품의 성분과 피부 적합도를 비교하고 있어요.</p>
+      <p>여러 상품을 비교하는 동안 준비된 광고가 있으면 잠시 보여드려요.</p>
       <div className="loading-steps" aria-hidden="true">
         <span className="is-active" />
         <span />
@@ -1664,6 +1665,10 @@ function App() {
   const ingredientQuestionRef = useRef<HTMLElement | null>(null);
   const serviceTermsConsentRef = useRef<HTMLInputElement | null>(null);
   const privacyConsentRef = useRef<HTMLInputElement | null>(null);
+  const searchInterstitial = useRef<ReturnType<typeof createSearchInterstitialController> | null>(null);
+  if (searchInterstitial.current === null) {
+    searchInterstitial.current = createSearchInterstitialController();
+  }
 
   const savedIds = useMemo(() => new Set(savedProductIds), [savedProductIds]);
   const compareIds = useMemo(() => new Set(compareProductIds), [compareProductIds]);
@@ -1739,6 +1744,15 @@ function App() {
   }, [savedItemCache, savedProductIds]);
 
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+
+  useEffect(() => {
+    const controller = searchInterstitial.current;
+    if (!controller) {
+      return undefined;
+    }
+    controller.preload();
+    return () => controller.dispose();
+  }, []);
 
   useEffect(() => {
     if (!offerDialog && screenStack.current.length <= 1) {
@@ -1992,7 +2006,14 @@ function App() {
     setError('');
     setLoading(true);
     try {
-      const nextResult = await requestRecommendations(answers);
+      const [recommendation] = await Promise.allSettled([
+        requestRecommendations(answers),
+        searchInterstitial.current?.showIfReady() ?? Promise.resolve(false),
+      ]);
+      if (recommendation.status === 'rejected') {
+        throw recommendation.reason;
+      }
+      const nextResult = recommendation.value;
       setCompareProductIds([]);
       setResult(nextResult);
       navigate('results');
