@@ -31,7 +31,7 @@ pnpm run build
 
 The miniapp identifier is `k-beauty-agent`. After uploading a build, QR testing uses `intoss-private://k-beauty-agent?_deploymentId=<deploymentId>`; the production deep link is `intoss://k-beauty-agent`. The build command produces the `.ait` package used by the Apps in Toss console. Before the first console upload:
 
-1. Create a non-game WebView app with the immutable app name `k-beauty-agent` and display name `K뷰티에이전트`.
+1. Create a non-game WebView app with the immutable app name `k-beauty-agent` and display name `뷰티인덱스`.
 2. Upload `miniapp/public/app-icon.png` as the 600 x 600 opaque app logo and keep its console image URL in sync with `miniapp/granite.config.ts`.
 3. Upload the generated `.ait` package and complete at least one QR test before requesting review.
 

@@ -3,9 +3,9 @@ import { defineConfig, type AppsInTossWebConfigResponse } from '@apps-in-toss/we
 const config: AppsInTossWebConfigResponse = defineConfig({
   appName: 'k-beauty-agent',
   brand: {
-    displayName: 'K뷰티에이전트',
+    displayName: '뷰티인덱스',
     primaryColor: '#3182F6',
-    icon: 'https://static.toss.im/appsintoss/60965/3ed9c583-09a5-4e8a-bf0c-36ffe4c86710.png',
+    icon: 'https://static.toss.im/appsintoss/60965/24e162a5-d6b0-45d4-a02c-83a037a41e3a.png',
   },
   web: {
     host: 'localhost',

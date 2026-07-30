@@ -1,4 +1,4 @@
-# K뷰티에이전트 · Apps in Toss 미니앱
+# 뷰티인덱스 · Apps in Toss 미니앱
 
 기존 K-Beauty Agent 추천 API를 앱인토스 WebView SDK 2.x에서 사용하는 React + TypeScript + Vite 프런트엔드입니다. 로그인이나 쿠키에 의존하지 않고, 익명 세션 토큰을 `X-KBeauty-Session` 헤더로 보냅니다.
 
@@ -40,7 +40,7 @@ pnpm build
 다음 값은 `granite.config.ts`와 동일해야 합니다.
 
 - appName: `k-beauty-agent`
-- 표시 이름: `K뷰티에이전트`
+- 표시 이름: `뷰티인덱스`
 - 앱 유형: 비게임 (`partner`)
 - 권한: 없음
 - 기본 색상: `#3182F6`
