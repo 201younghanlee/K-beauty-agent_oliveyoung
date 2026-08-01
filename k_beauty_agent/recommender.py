@@ -111,13 +111,24 @@ class IngredientHybridRecommender:
         if product.recommendation_tier not in {"verified", "eligible"}:
             self._add(item, "penalties", -100.0)
             item.cautions.append("excluded because this catalog record is for discovery only")
+        if product.catalog_source == "official_brand" and product.source_url and product.verified_at:
+            # A current first-party product identity is materially stronger
+            # than a community label transcription when the user asks for a
+            # product form. Missing formula data is still penalized below and
+            # remains a hard exclusion for allergy/sensitivity requests.
+            self._add(item, "source_confidence", 2.5)
+            item.reasons.append("product identity verified on an official brand page")
         if product.ingredient_status != "complete":
             if needs_complete_ingredient_data(profile):
                 self._add(item, "penalties", -100.0)
                 item.cautions.append("excluded because the full ingredient list is not available")
             else:
                 self._add(item, "penalties", -1.0)
-                item.cautions.append("ingredient data is community-reported; verify the current package before use")
+                item.cautions.append(
+                    "ingredient data is community-reported; verify the current package before use"
+                    if product.catalog_source == "open_beauty_facts"
+                    else "the full ingredient list is not recorded; verify the current package before use"
+                )
 
         if requested_skin_type and requested_skin_type in product.suited_skin_types:
             self._add(item, "skin_fit", 1.5)

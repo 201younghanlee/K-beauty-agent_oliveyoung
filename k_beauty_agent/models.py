@@ -210,6 +210,7 @@ class ProductScore:
             "ingredient_evidence": 0.0,
             "skin_fit": 0.0,
             "category_match": 0.0,
+            "source_confidence": 0.0,
             "review_confidence": 0.0,
             "personalization": 0.0,
             "penalties": 0.0,

@@ -56,11 +56,24 @@ class ProductDatabase:
             self._inferred_concerns[product.id] = inferred
 
     @classmethod
-    def from_json(cls, path: str | Path) -> "ProductDatabase":
+    def from_json(
+        cls,
+        path: str | Path,
+        *,
+        default_catalog_source: str | None = None,
+    ) -> "ProductDatabase":
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if not isinstance(data, list):
             raise ValueError("Product DB must be a JSON array.")
-        return cls([Product.from_mapping(item) for item in data])
+        products: list[Product] = []
+        for item in data:
+            if not isinstance(item, dict):
+                raise ValueError("Every product DB entry must be a JSON object.")
+            mapping = item
+            if default_catalog_source and not item.get("catalog_source"):
+                mapping = {**item, "catalog_source": default_catalog_source}
+            products.append(Product.from_mapping(mapping))
+        return cls(products)
 
     @classmethod
     def from_csv(
@@ -135,7 +148,7 @@ class ProductDatabase:
         excluded_ingredient_set = {normalize_token(item) for item in exclude_ingredients or []}
 
         candidates = self._candidate_products(category_set)
-        scored: list[tuple[float, int, Product]] = []
+        scored: list[tuple[float, int, int, Product]] = []
         for product in candidates:
             if product.recommendation_tier not in {"verified", "eligible"}:
                 continue
@@ -179,11 +192,12 @@ class ProductDatabase:
 
             if score > 0:
                 tier_rank = 0 if product.recommendation_tier == "verified" else 1
-                scored.append((score, tier_rank, product))
+                source_rank = 0 if product.catalog_source in {"curated", "official_brand"} else 1
+                scored.append((score, tier_rank, source_rank, product))
 
-        scored.sort(key=lambda item: (-item[0], item[1], item[2].brand.lower(), item[2].name.lower()))
+        scored.sort(key=lambda item: (-item[0], item[1], item[2], item[3].brand.lower(), item[3].name.lower()))
         selected = scored if limit is None else scored[:limit]
-        return [product for _, _, product in selected]
+        return [product for _, _, _, product in selected]
 
     def get(self, product_id: str) -> Product | None:
         return self._by_id.get(product_id)

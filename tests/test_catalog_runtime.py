@@ -442,6 +442,65 @@ def test_community_source_page_is_not_labeled_as_an_official_brand_page() -> Non
     assert product.recommendation_tier == "discovery"
 
 
+def test_official_brand_missing_ingredients_do_not_claim_community_reporting() -> None:
+    product = Product.from_mapping(
+        {
+            "id": "official-example-mask",
+            "name": "Example Mask",
+            "brand": "Example",
+            "category": "face_mask",
+            "country": "Korea",
+            "source_url": "https://example.com/products/mask",
+            "official_url": "https://example.com/products/mask",
+            "verified_at": "2026-08-02",
+            "catalog_source": "official_brand",
+            "ingredient_status": "missing",
+            "recommendation_tier": "eligible",
+        }
+    )
+
+    score = KBeautyAgent(ProductDatabase([product])).recommender.score_product(
+        product,
+        SkinProfile(desired_categories=["face_mask"]),
+    )
+
+    assert "the full ingredient list is not recorded" in " ".join(score.cautions)
+    assert "community-reported" not in " ".join(score.cautions)
+
+
+def test_official_brand_products_rank_ahead_of_community_rows_for_the_same_category() -> None:
+    community = replace(
+        _product("community-mask"),
+        name="A Community Mask",
+        category="face_mask",
+        ingredients=(),
+        ingredient_status="missing",
+    )
+    official = Product.from_mapping(
+        {
+            "id": "official-example-mask",
+            "name": "Z Official Mask",
+            "brand": "Official Lab",
+            "category": "face_mask",
+            "country": "Korea",
+            "source_url": "https://example.com/products/mask",
+            "official_url": "https://example.com/products/mask",
+            "verified_at": "2026-08-02",
+            "catalog_source": "official_brand",
+            "ingredient_status": "missing",
+            "recommendation_tier": "eligible",
+        }
+    )
+    database = ProductDatabase([community, official])
+    profile = SkinProfile(desired_categories=["face_mask"])
+
+    assert database.search(categories=["face_mask"], limit=2) == [official, community]
+    official_score = IngredientHybridRecommender().score_product(official, profile)
+    community_score = IngredientHybridRecommender().score_product(community, profile)
+    assert official_score.score_components["source_confidence"] == 2.5
+    assert official_score.score > community_score.score
+
+
 def test_safety_filter_runs_before_candidate_limit() -> None:
     reported = [_product(f"reported-{index:03d}") for index in range(350)]
     verified = _product("verified-safe", tier="verified", ingredient_status="complete", source="curated")

@@ -23,22 +23,64 @@ EXACT_DISCLOSURE = (
 
 def test_official_expansion_and_partner_links_share_exact_catalog_ids() -> None:
     curated = ProductDatabase.from_csv(ROOT / "data" / "products_verified.csv")
-    expansion = ProductDatabase.from_json(EXPANSION_PATH)
+    expansion = ProductDatabase.from_json(
+        EXPANSION_PATH,
+        default_catalog_source="official_brand",
+    )
     catalog = ProductDatabase.combine(curated, expansion)
     links = parse_coupang_partner_links(LINKS_PATH.read_text(encoding="utf-8"))
 
     catalog_ids = {product.id for product in catalog.products}
     link_ids = {link.product_id for link in links}
 
-    assert len(expansion.products) == 31
+    assert len(expansion.products) == 65
     assert len(links) == 49
     assert len(link_ids) == 49
     assert link_ids <= catalog_ids
     assert "official-kiehls-rare-earth-deep-pore-cleansing-masque" in catalog_ids
     assert "official-kiehls-rare-earth-deep-pore-cleansing-masque" not in link_ids
     assert all(product.official_url for product in expansion.products)
-    assert all(product.ingredient_status == "missing" for product in expansion.products)
-    assert all(product.recommendation_tier == "eligible" for product in expansion.products)
+    assert all(product.catalog_source == "official_brand" for product in expansion.products)
+    assert all(product.ingredient_status in {"complete", "reported", "missing"} for product in expansion.products)
+    assert all(product.recommendation_tier in {"verified", "eligible"} for product in expansion.products)
+
+
+def test_official_catalog_covers_every_supported_category_with_depth() -> None:
+    curated = ProductDatabase.from_csv(ROOT / "data" / "products_verified.csv")
+    expansion = ProductDatabase.from_json(
+        EXPANSION_PATH,
+        default_catalog_source="official_brand",
+    )
+    catalog = ProductDatabase.combine(curated, expansion)
+    supported_categories = {
+        "base_makeup",
+        "body_cleanser",
+        "body_exfoliator",
+        "body_moisturizer",
+        "cleanser",
+        "conditioner",
+        "exfoliator",
+        "eye_care",
+        "eye_makeup",
+        "face_mask",
+        "hair_treatment",
+        "lip_care",
+        "lip_makeup",
+        "moisturizer",
+        "serum",
+        "shampoo",
+        "sunscreen",
+        "toner",
+    }
+
+    category_counts = {
+        category: sum(product.category == category for product in catalog.products)
+        for category in supported_categories
+    }
+
+    assert min(category_counts.values()) >= 5
+    assert len({product.brand for product in catalog.products}) >= 40
+    assert sum(product.catalog_source == "official_brand" for product in catalog.products) == 65
 
 
 def test_git_managed_coupang_file_is_loaded_and_uses_exact_disclosure(

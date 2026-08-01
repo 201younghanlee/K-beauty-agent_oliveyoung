@@ -141,6 +141,8 @@ def _reason_group(reason: str) -> str:
         return "primary_concern"
     if reason.startswith("matches requested category"):
         return "category"
+    if reason == "product identity verified on an official brand page":
+        return "product_source"
     if reason.startswith("labeled as suitable"):
         return "skin_type"
     if reason.startswith("contains requested ingredient"):

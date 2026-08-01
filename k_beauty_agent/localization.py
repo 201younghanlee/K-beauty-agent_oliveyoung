@@ -88,6 +88,7 @@ COMPONENT_KO = {
     "ingredient_evidence": "성분 근거",
     "skin_fit": "피부 타입 적합도",
     "category_match": "제품군 일치",
+    "source_confidence": "상품 출처 신뢰도",
     "review_confidence": "리뷰 신뢰도",
     "personalization": "개인화 반영",
     "penalties": "주의/감점",
@@ -179,6 +180,8 @@ def translate_reason(reason: str, language: Language | None) -> str:
         return f"제품 DB 태그가 {term(concern, language)} 고민과 일치합니다."
     if reason == "claims to be fragrance-free for a lower-irritation routine":
         return "향료 프리 표시가 있어 저자극 루틴에 더 잘 맞습니다."
+    if reason == "product identity verified on an official brand page":
+        return "공식 브랜드 페이지에서 제품명과 제품 유형을 확인했습니다."
     if reason.startswith("matches gentle-routine signal: "):
         claims = reason.removeprefix("matches gentle-routine signal: ").split(", ")
         claim_text = ", ".join(
@@ -270,6 +273,7 @@ def translate_caution(caution: str, language: Language | None) -> str:
         "excluded because the full ingredient list is not available": "전체 성분 정보가 없어 맞춤 추천에서 제외했습니다.",
         "ingredient data may be incomplete": "성분 정보가 불완전할 수 있습니다.",
         "ingredient data is community-reported; verify the current package before use": "커뮤니티가 등록한 성분 정보이므로 사용 전 현재 포장을 다시 확인해 주세요.",
+        "the full ingredient list is not recorded; verify the current package before use": "전체 성분표가 등록되지 않아 사용 전 현재 제품 포장을 확인해 주세요.",
         "checked price is missing, so cannot verify under": "최근 확인된 가격이 없어 최대 가격 조건을 확인할 수 없음:",
         "checked price is missing, so cannot verify over": "최근 확인된 가격이 없어 최소 가격 조건을 확인할 수 없음:",
         "Olive Young price is missing, so cannot verify under": "올리브영 가격 데이터가 없어 최대 가격 조건을 확인할 수 없음:",

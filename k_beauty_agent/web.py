@@ -189,7 +189,10 @@ def _build_agent() -> KBeautyAgent:
     if DEFAULT_OFFICIAL_EXPANSION_JSON.exists():
         fallback = ProductDatabase.combine(
             fallback,
-            ProductDatabase.from_json(DEFAULT_OFFICIAL_EXPANSION_JSON),
+            ProductDatabase.from_json(
+                DEFAULT_OFFICIAL_EXPANSION_JSON,
+                default_catalog_source="official_brand",
+            ),
         )
     source = product_source()
     if source in {"catalog_snapshot", "hybrid_catalog"}:

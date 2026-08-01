@@ -525,6 +525,8 @@ function productSourceNames(product: Product): string[] {
     names.add('Open Beauty Facts');
   } else if (product.catalogSource === 'curated') {
     names.add('검수된 큐레이션 데이터');
+  } else if (product.catalogSource === 'official_brand') {
+    names.add('공식 브랜드');
   } else if (product.catalogSource) {
     names.add(product.catalogSource.replace(/_/g, ' '));
   }
