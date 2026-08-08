@@ -9,8 +9,8 @@
     "base_makeup": 27,
     "body_cleanser": 142,
     "body_exfoliator": 3,
-    "body_moisturizer": 67,
-    "cleanser": 57,
+    "body_moisturizer": 64,
+    "cleanser": 56,
     "conditioner": 27,
     "exfoliator": 6,
     "eye_care": 4,
@@ -21,7 +21,7 @@
     "lip_makeup": 3,
     "moisturizer": 23,
     "serum": 5,
-    "shampoo": 137,
+    "shampoo": 135,
     "sunscreen": 19,
     "toner": 4
   },
@@ -52,15 +52,15 @@
     "data_attribution_url"
   ],
   "country_counts": {
-    "Unknown": 586
+    "Unknown": 580
   },
-  "csv_sha256": "c71f20d4e8afa0289b735395140daac49ad85e0e5ec857be2ac08b7b83109229",
+  "csv_sha256": "d0adb6bc59be5164f4dd173463cd932006eb41c08b044578edabf50c22c86000",
   "data_quality": {
     "ingredient_status": "reported",
     "notice": "Ingredient lists are community-reported label transcriptions and are not guaranteed complete. Only records updated within the configured source-age limit are eligible, but current packaging must still be verified; allergy and avoid-ingredient recommendations must exclude these rows.",
     "recommendation_tier": "eligible"
   },
-  "generated_at": "2026-07-24T00:17:49Z",
+  "generated_at": "2026-08-08T00:18:12Z",
   "licenses": {
     "database": {
       "id": "ODbL-1.0",
@@ -73,39 +73,39 @@
       "url": "https://creativecommons.org/licenses/by-sa/3.0/"
     }
   },
-  "previous_product_count": 218,
+  "previous_product_count": 586,
   "processing": {
-    "accepted_candidates": 586,
+    "accepted_candidates": 580,
     "duplicate_rows": 0,
-    "lines_seen": 67241,
+    "lines_seen": 69340,
     "malformed_json": 0,
     "non_object_rows": 0,
     "skipped": {
-      "invalid_barcode": 106,
+      "invalid_barcode": 213,
       "invalid_name": 770,
-      "malformed_ingredient_text": 202,
-      "missing_brand": 8316,
-      "missing_image": 1918,
-      "missing_ingredients": 2644,
-      "missing_name": 22850,
-      "packaging_text_in_ingredients": 49,
+      "malformed_ingredient_text": 204,
+      "missing_brand": 8935,
+      "missing_image": 1974,
+      "missing_ingredients": 2793,
+      "missing_name": 23166,
+      "packaging_text_in_ingredients": 50,
       "prohibited_leave_on_ingredient": 11,
-      "stale_source_record": 2358,
+      "stale_source_record": 2372,
       "too_few_ingredients": 179,
-      "unsupported_category": 27252
+      "unsupported_category": 28093
     }
   },
-  "product_count": 586,
+  "product_count": 580,
   "record_freshness": {
-    "as_of": "2026-07-24T00:17:49Z",
-    "dated_products": 586,
-    "median_age_days": 565,
+    "as_of": "2026-08-08T00:18:12Z",
+    "dated_products": 580,
+    "median_age_days": 580,
     "missing_source_updated_at": 0,
     "newest_source_updated_at": "2025-06-12T05:30:52Z",
-    "older_than_365_days": 586,
+    "older_than_365_days": 580,
     "older_than_3_years": 0,
     "older_than_5_years": 0,
-    "oldest_source_updated_at": "2023-07-30T08:41:26Z",
+    "oldest_source_updated_at": "2023-08-14T01:44:08Z",
     "updated_within_365_days": 0
   },
   "safety_thresholds": {
@@ -140,7 +140,7 @@
   },
   "schema_version": 1,
   "source_dump_url": "https://static.openbeautyfacts.org/data/openbeautyfacts-products.jsonl.gz",
-  "source_etag": "\"6a62af2d-54b48a1\"",
-  "source_last_modified": "2026-07-24T00:17:49Z",
+  "source_etag": "\"6a7675c4-5721840\"",
+  "source_last_modified": "2026-08-08T00:18:12Z",
   "source_mode": "remote_dump"
 }
